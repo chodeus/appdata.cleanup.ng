@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Lint + build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
+
+      - name: PHP syntax check
+        run: |
+          status=0
+          while IFS= read -r f; do
+            php -l "$f" || status=1
+          done < <(find source -name '*.php')
+          exit $status
+
+      - name: Validate plugin manifest (XML)
+        run: xmllint --noout plugins/appdata.cleanup.ng.plg
+
+      - name: Test build
+        run: |
+          chmod +x pkg_build.sh
+          ./pkg_build.sh
+
+      - name: Verify manifest MD5 matches package
+        run: |
+          ver=$(grep -oP '<!ENTITY version\s+"\K[^"]+' plugins/appdata.cleanup.ng.plg)
+          plg_md5=$(grep -oP '<!ENTITY md5\s+"\K[^"]+' plugins/appdata.cleanup.ng.plg)
+          pkg_md5=$(md5sum "archive/appdata.cleanup.ng-${ver}-x86_64-1.txz" | awk '{print $1}')
+          echo "manifest=$plg_md5  package=$pkg_md5"
+          [ "$plg_md5" = "$pkg_md5" ]

@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # Remove today's packages so pkg_build.sh uses a clean date version (no collision suffix)
+      - name: Clean today's packages
+        run: |
+          today=$(date +"%Y.%m.%d")
+          rm -f archive/appdata.cleanup.ng-${today}*-x86_64-1.txz
+
+      - name: Build package
+        run: |
+          chmod +x pkg_build.sh
+          ./pkg_build.sh
+
+      - name: Extract version
+        id: version
+        run: |
+          version=$(grep -oP '<!ENTITY version\s+"\K[^"]+' plugins/appdata.cleanup.ng.plg)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "file=appdata.cleanup.ng-${version}-x86_64-1.txz" >> "$GITHUB_OUTPUT"
+
+      - name: Commit release
+        run: |
+          git add -A
+          git commit -m "Release ${{ steps.version.outputs.version }}"
+          git push origin master
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          body: |
+            ## Appdata Cleanup NG v${{ steps.version.outputs.version }}
+
+            Install in Unraid (Plugins > Install Plugin):
+            `https://raw.githubusercontent.com/chodeus/appdata.cleanup.ng/master/plugins/appdata.cleanup.ng.plg`
+
+            See the manifest CHANGES for details.
+          files: archive/${{ steps.version.outputs.file }}
+          draft: false
+          prerelease: false

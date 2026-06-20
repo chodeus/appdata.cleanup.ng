@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# pre-push: refuse to push when the manifest MD5 doesn't match the built package,
+# so a release never ships a .plg pointing at a stale/mismatched .txz (the classic
+# "edited source but forgot to rebuild" mistake).
+#
+# Setup (one-time per clone):  git config core.hooksPath .githooks
+# Override (rare):             git push --no-verify
+
+set -eu
+
+plg="plugins/appdata.cleanup.ng.plg"
+[ -f "$plg" ] || exit 0
+
+version=$(grep -oE 'ENTITY version[^"]*"[^"]+"' "$plg" | grep -oE '"[^"]+"' | tr -d '"' | head -1)
+plg_md5=$(grep -oE 'ENTITY md5[^"]*"[^"]+"' "$plg" | grep -oE '"[^"]+"' | tr -d '"' | head -1)
+pkg="archive/appdata.cleanup.ng-${version}-x86_64-1.txz"
+
+if [ ! -f "$pkg" ]; then
+  echo "pre-push BLOCKED: package for version $version is missing ($pkg)."
+  echo "  Run ./pkg_build.sh and commit, then push. Override: git push --no-verify"
+  exit 1
+fi
+
+if command -v md5 >/dev/null 2>&1; then
+  pkg_md5=$(md5 -q "$pkg")
+else
+  pkg_md5=$(md5sum "$pkg" | awk '{print $1}')
+fi
+
+if [ "$plg_md5" != "$pkg_md5" ]; then
+  echo "pre-push BLOCKED: manifest md5 does not match the package."
+  echo "  manifest: $plg_md5"
+  echo "  package : $pkg_md5"
+  echo "  Run ./pkg_build.sh and commit, then push. Override: git push --no-verify"
+  exit 1
+fi
+
+exit 0

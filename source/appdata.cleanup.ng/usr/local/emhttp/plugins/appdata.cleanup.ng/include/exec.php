@@ -10,21 +10,7 @@ require_once("/usr/local/emhttp/plugins/dynamix.docker.manager/include/DockerCli
 require_once("/usr/local/emhttp/plugins/community.applications/include/helpers.php");
 require_once("/usr/local/emhttp/plugins/appdata.cleanup.ng/include/helpers.php");
 
-############################################
-############################################
-##                                        ##
-## BEGIN MAIN ROUTINES CALLED BY THE HTML ##
-##                                        ##
-############################################
-############################################
-
 switch ($_POST['action']) {
-
-#########################################
-#                                       #
-# Displays the orphaned appdata folders #
-#                                       #
-#########################################
 
 case 'getOrphanAppdata':
 	libxml_use_internal_errors(true);
@@ -36,7 +22,6 @@ case 'getOrphanAppdata':
     $info = array();
   }
 
-  # Get the list of appdata folders used by all of the my* templates
   $availableVolumes = array();
   $ownedBy = array();   # owning appdata folder (e.g. "kometa") -> app that owns it via its /config mount
   $templateSegs = array();  # every appdata folder any template references (for the optional filesystem scan)
@@ -58,7 +43,7 @@ case 'getOrphanAppdata':
 				$temp['Name'] = $o['Name'];
 				$temp['HostDir'] = $volumeArray['value'];
 				$availableVolumes[$volumeArray['value']] = $temp;
-				# an app's OWN appdata is its /config mount; record who owns that folder
+				# an app's OWN appdata is its /config mount
 				if ( strpos(strtolower((string)$volumeArray['@attributes']['Target']),"/config") === 0 ) {
 					$seg = appdataCleanupNgOwnerSegment($volumeArray['value']);
 					if ( $seg !== "" && ! isset($ownedBy[$seg]) ) $ownedBy[$seg] = $o['Name'];
@@ -67,8 +52,7 @@ case 'getOrphanAppdata':
 		}
 	}
 
-  # build the set of paths actually used by installed containers (canonical form
-  # handles trailing slashes and cache/user so live mounts compare reliably)
+  # canonical form so cache/user and trailing-slash differences compare reliably
   $inUse = array();
   foreach ($info as $installedDocker) {
     if ( ! is_array($installedDocker['Volumes']) ) continue;
@@ -79,9 +63,7 @@ case 'getOrphanAppdata':
     }
   }
 
-  # remove a candidate only if a container uses that folder itself OR something
-  # inside it (deleting it would harm a live container). A broad parent mount
-  # (e.g. a backup tool mounting all of /mnt/user/appdata) must NOT exclude everything.
+  # match folder-itself or anything inside it, but a broad parent mount (e.g. a backup tool mounting all of /mnt/user/appdata) must NOT exclude every candidate
   foreach ($availableVolumes as $key => $volume) {
     $cand = appdataCleanupNgCanon($volume['HostDir']);
     foreach ($inUse as $u => $unused) {
@@ -92,17 +74,13 @@ case 'getOrphanAppdata':
     }
   }
 
-  # remove "borrowed" references: an appdata folder owned (via its own /config mount)
-  # by a different app than the template that surfaced it (e.g. notdaps mounting
-  # kometa/config) belongs to that owner, not the borrowing app.
+  # drop "borrowed" folders: owned via /config by a different app than the template that surfaced them
   foreach ($availableVolumes as $key => $volume) {
     $seg = appdataCleanupNgOwnerSegment($volume['HostDir']);
     if ( $seg !== "" && isset($ownedBy[$seg]) && $ownedBy[$seg] !== $volume['Name'] ) {
       unset($availableVolumes[$key]);
     }
   }
-  
-  # remove from list any folders which don't actually exist
   
   $temp = $availableVolumes;
   foreach ($availableVolumes as $volume) {
@@ -117,7 +95,6 @@ case 'getOrphanAppdata':
   }
   $availableVolumes = $temp;
 
-  # remove from list any folders which are equivalent 
   $tempArray = $availableVolumes;
   foreach ( $availableVolumes as $volume ) {
     $flag = false;
@@ -151,20 +128,17 @@ case 'getOrphanAppdata':
     }
   }
 
-  # only offer folders we would actually delete (confined to the appdata share)
   foreach ( $availableVolumes as $key => $volume ) {
     if ( ! appdataCleanupNgPathWithinAppdata($volume['HostDir']) ) {
       unset($availableVolumes[$key]);
     }
   }
 
-  # drop anything the user has chosen to ignore
   foreach ( $availableVolumes as $key => $volume ) {
     if ( appdataCleanupNgIsIgnored($volume['HostDir']) ) unset($availableVolumes[$key]);
   }
 
-  # optional, opt-in: direct filesystem scan for template-less folders not covered
-  # by any template, container, or compose stack
+  # opt-in: filesystem scan for template-less folders not covered by any template, container, or compose stack
   $fsOrphans = array();
   if ( getPost("fsscan","no") === "yes" ) {
     $coveredSegs = $templateSegs;
@@ -176,8 +150,7 @@ case 'getOrphanAppdata':
     }
   }
 
-  # one concise line per scan to the system log so "nothing showed up" is diagnosable
-  # via Tools > System Log / Diagnostics (no UI noise)
+  # log one line per scan so "nothing showed up" is diagnosable without UI noise
   appdataCleanupNgLog(sprintf("scan - templates=%d, docker_containers=%d, compose_protected=%d, offered=%d%s",
     count($all_files), count($info), count($composeProtected), count($availableVolumes),
     is_dir("/var/lib/docker/tmp") ? "" : " [docker service not running]"));
@@ -224,7 +197,7 @@ case 'getOrphanAppdata':
     echo "</div>";
   }
 
-  # optional, opt-in: stale templates (saved templates with no installed container)
+  # opt-in: stale templates (saved templates with no installed container)
   if ( getPost("stale","no") === "yes" ) {
     $installedNames = array();
     foreach ( $info as $c ) if ( ! empty($c['Name']) ) $installedNames[] = $c['Name'];
@@ -250,12 +223,6 @@ case 'getOrphanAppdata':
     }
   }
   break;
-  
-########################################
-#                                      #
-# Deletes the selected appdata folders #
-#                                      #
-########################################
 
 case "deleteAppdata":
   $paths = getPost("paths","no");
@@ -296,12 +263,6 @@ case "deleteAppdata":
   }
   echo "deleted";
   break;
-
-########################################
-#                                      #
-# Plain-text diagnostics for support   #
-#                                      #
-########################################
 
 case "captureDiagnostics":
   echo appdataCleanupNgBuildDiagnostics();

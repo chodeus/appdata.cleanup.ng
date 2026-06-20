@@ -70,14 +70,7 @@ function dirContents($path) {
   return array_diff($dirContents,array(".",".."));
 }
 
-#############################################################
-#                                                           #
-# Resolve the appdata share root(s) from docker.cfg and     #
-# confine deletions to within them. Backstop against a      #
-# crafted/buggy request deleting anything outside appdata.  #
-#                                                           #
-#############################################################
-
+# appdata share root(s) from docker.cfg; deletions are confined within these as a backstop against a crafted request escaping appdata
 function appdataCleanupNgAppdataRoots() {
   $dockerOptions = @my_parse_ini_file("/boot/config/docker.cfg");
   $cfgPath = isset($dockerOptions['DOCKER_APP_CONFIG_PATH']) ? $dockerOptions['DOCKER_APP_CONFIG_PATH'] : "/mnt/user/appdata/";
@@ -101,20 +94,9 @@ function appdataCleanupNgPathWithinAppdata($path) {
   return false;
 }
 
-#############################################################
-#                                                           #
-# Canonical path for comparison: collapse //, strip the     #
-# trailing slash, and normalize /mnt/cache -> /mnt/user so  #
-# template paths and live mounts compare reliably.          #
-#                                                           #
-#############################################################
-
 function appdataCleanupNgCanon($path) {
   $p = rtrim(preg_replace('#/+#','/',trim((string)$path)),"/");
-  # collapse any pool / array-disk mount of a share to its /mnt/user view, so the same
-  # appdata folder compares equal whether a template/container references it via the pool
-  # (e.g. /mnt/fcache/appdata) or the user share (/mnt/user/appdata). Skip mounts that are
-  # genuinely NOT the user share.
+  # collapse any pool/array-disk mount to its /mnt/user view so the same folder compares equal regardless of pool; skip mounts that are genuinely not the user share
   if ( preg_match('#^/mnt/([^/]+)(/.*)?$#',$p,$m) ) {
     $skip = array("user","user0","disks","remotes","rootsharecache","addons");
     if ( ! in_array($m[1],$skip,true) ) {
@@ -124,7 +106,6 @@ function appdataCleanupNgCanon($path) {
   return $p;
 }
 
-# Top-level appdata folder name that owns a path (e.g. .../appdata/kometa/config -> "kometa")
 function appdataCleanupNgOwnerSegment($path) {
   $c = appdataCleanupNgCanon($path);
   foreach ( appdataCleanupNgAppdataRoots() as $root ) {
@@ -137,16 +118,7 @@ function appdataCleanupNgOwnerSegment($path) {
   return "";
 }
 
-#############################################################
-#                                                           #
-# ZFS dataset awareness. An appdata folder that is an exact #
-# ZFS dataset mountpoint must be removed with `zfs destroy`,#
-# not rm -rf (which would empty a still-mounted dataset).   #
-# A mountpoint that is NOT a known dataset is refused        #
-# outright (never rm -rf across a mount boundary).          #
-#                                                           #
-#############################################################
-
+# a folder that is an exact ZFS dataset mountpoint needs `zfs destroy`, not rm -rf (which would empty a still-mounted dataset); a non-dataset mountpoint is refused outright
 function appdataCleanupNgZfsAvailable() {
   static $a = null;
   if ( $a !== null ) return $a;
@@ -156,7 +128,6 @@ function appdataCleanupNgZfsAvailable() {
   return $a;
 }
 
-# map of canonical dataset mountpoint -> dataset name
 function appdataCleanupNgZfsDatasetMap() {
   static $map = null;
   if ( $map !== null ) return $map;
@@ -175,7 +146,6 @@ function appdataCleanupNgZfsDatasetMap() {
   return $map;
 }
 
-# dataset name if $path is an EXACT zfs dataset mountpoint, else "" (case-sensitive)
 function appdataCleanupNgResolveZfsDataset($path) {
   $map = appdataCleanupNgZfsDatasetMap();
   if ( empty($map) ) return "";
@@ -188,7 +158,6 @@ function appdataCleanupNgResolveZfsDataset($path) {
   return "";
 }
 
-# is $path its own mount point (device id differs from its parent)?
 function appdataCleanupNgIsMountPoint($path) {
   $rp = @realpath($path);
   if ( $rp === false || ! is_dir($rp) || $rp === "/" ) return false;
@@ -208,14 +177,7 @@ function appdataCleanupNgZfsDestroy($dataset) {
   return array("ok"=>($rc===0),"recursive"=>$recursive,"message"=>trim(implode("\n",$o)));
 }
 
-#############################################################
-#                                                           #
-# Ignore list - folders the user marks to never offer       #
-# (e.g. an appdata folder used by a script, not a           #
-# container). Persisted on flash, keyed by canonical path.  #
-#                                                           #
-#############################################################
-
+# ignore list: folders the user marks to never offer, persisted on flash keyed by canonical path
 function appdataCleanupNgIgnoreFile() {
   return "/boot/config/plugins/appdata.cleanup.ng/ignore.list";
 }
@@ -266,15 +228,7 @@ function appdataCleanupNgRemoveIgnore($path) {
   return true;
 }
 
-#############################################################
-#                                                           #
-# Optional filesystem scan: top-level folders physically in #
-# the appdata share that are NOT accounted for by any       #
-# template, container, or compose stack (covered segments). #
-# Less conservative than template-only - opt-in.            #
-#                                                           #
-#############################################################
-
+# opt-in scan: top-level appdata folders not accounted for by any template, container, or compose stack (less conservative than template-only)
 function appdataCleanupNgFilesystemOrphans($coveredSegs) {
   $found = array();
   $seen = array();
@@ -294,16 +248,7 @@ function appdataCleanupNgFilesystemOrphans($coveredSegs) {
   return $found;
 }
 
-#############################################################
-#                                                           #
-# Template cleaner. A "stale" template is a saved Docker    #
-# template whose container is no longer installed. Removing #
-# it deletes the saved container config only (not the image #
-# or any container). Delete is hard-confined to            #
-# templates-user/*.xml.                                     #
-#                                                           #
-#############################################################
-
+# a "stale" template is a saved Docker template whose container is no longer installed; deleting it removes the saved config only, hard-confined to templates-user/*.xml
 function appdataCleanupNgTemplateDir() {
   return "/boot/config/plugins/dockerMan/templates-user";
 }
@@ -343,26 +288,12 @@ function appdataCleanupNgDeleteTemplate($file) {
   return @unlink($real);
 }
 
-#############################################################
-#                                                           #
-# Log to the system log (/var/log/syslog) so messages are   #
-# visible in Tools > System Log and captured in the         #
-# Tools > Diagnostics bundle a user attaches to support.    #
-#                                                           #
-#############################################################
-
+# log to syslog so messages land in Tools > System Log and the Diagnostics bundle
 function appdataCleanupNgLog($message,$priority=LOG_INFO) {
   openlog("appdata.cleanup.ng",LOG_PID,LOG_USER);
   syslog($priority,(string)$message);
   closelog();
 }
-
-#############################################################
-#                                                           #
-# Build a focused plain-text diagnostics report for support #
-# (env, appdata roots, compose state, recent log lines).    #
-#                                                           #
-#############################################################
 
 function appdataCleanupNgBuildDiagnostics() {
   $uv = @parse_ini_file("/etc/unraid-version");
@@ -402,13 +333,7 @@ function appdataCleanupNgBuildDiagnostics() {
   return implode("\n",$out)."\n";
 }
 
-#############################################################
-#                                                           #
-# Folder size via du -sb, cached in tmpfs keyed by mtime so #
-# repeat scans don't re-walk unchanged orphan folders.      #
-#                                                           #
-#############################################################
-
+# du -sb, cached in tmpfs keyed by mtime so repeat scans don't re-walk unchanged folders
 function appdataCleanupNgFolderSizeBytes($path) {
   $real = @realpath($path);
   if ( $real === false || ! is_dir($real) ) return -1;
@@ -440,16 +365,7 @@ function appdataCleanupNgFormatBytes($bytes) {
   return ($i === 0 ? (string)(int)$b : number_format($b,1))." ".$units[$i];
 }
 
-#############################################################
-#                                                           #
-# Appdata folders claimed by docker-compose stacks managed  #
-# by Compose Manager. Catches stacks that are 'down'        #
-# (no container, no template) so their in-use appdata is    #
-# never offered for deletion. Indirect-aware: the real      #
-# compose file may live outside the project dir.            #
-#                                                           #
-#############################################################
-
+# appdata claimed by Compose Manager stacks, incl. 'down' stacks (no container/template); indirect-aware since the real compose file may live outside the project dir
 function appdataCleanupNgParseEnvFile($file,&$env) {
   if ( ! is_file($file) ) return;
   foreach ( (array)@file($file,FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES) as $line ) {
@@ -523,9 +439,7 @@ function appdataCleanupNgComposeReferencedPaths() {
           $protected[$full] = true;
         }
       }
-      # fail-safe: a volume host root is an UNRESOLVED ${var}/$var (e.g. set in the
-      # shell, not .env), but its next segment names an EXISTING appdata folder.
-      # Protect it conservatively so an in-use folder is never offered for deletion.
+      # fail-safe: host root is an unresolved ${var}/$var but its next segment names an existing appdata folder, so protect it conservatively
       if ( preg_match_all('#\$(?:\{[A-Za-z_][A-Za-z0-9_]*(?::?-[^}]*)?\}|[A-Za-z_][A-Za-z0-9_]*)/([A-Za-z0-9][A-Za-z0-9._-]*)#',$contents,$uns,PREG_SET_ORDER) ) {
         foreach ( $uns as $uh ) {
           $seg = $uh[1];

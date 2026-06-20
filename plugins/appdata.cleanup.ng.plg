@@ -3,7 +3,7 @@
 <!ENTITY name      "appdata.cleanup.ng">
 <!ENTITY author    "chodeus">
 <!ENTITY version   "2026.06.20">
-<!ENTITY md5       "6e75cfe21b780e067817da38cf2980a9">
+<!ENTITY md5       "949afe7e7178b4f9b77e9d6ee8b41ebf">
 <!ENTITY launch    "Settings/CleanUpAppdata">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "chodeus/appdata.cleanup.ng">
@@ -15,7 +15,9 @@
 <CHANGES>
 ###ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING###
 
-###2026.06.20 - First release
+###2026.06.20 - First release (BETA)
+BETA: orphan detection, delete-safety confinement, and install are verified on current Unraid. Custom appdata pools, ZFS dataset deletion, and Docker Compose coverage still need real-world testing - please report results (see the README "Status" section).
+
 Forked from Squid's CA Cleanup Appdata (ca.cleanup.appdata) version 2024.11.28, then revived and modernized for current Unraid. Added since the fork:
 
 Fixes and safety:
