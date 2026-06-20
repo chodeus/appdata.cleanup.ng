@@ -1,0 +1,103 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+<!ENTITY name      "appdata.cleanup.ng">
+<!ENTITY author    "chodeus">
+<!ENTITY version   "2026.06.20">
+<!ENTITY md5       "6e75cfe21b780e067817da38cf2980a9">
+<!ENTITY launch    "Settings/CleanUpAppdata">
+<!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
+<!ENTITY github    "chodeus/appdata.cleanup.ng">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/&github;/master/plugins/&name;.plg">
+]>
+
+<PLUGIN name="&name;" author="&author;" version="&version;" min="6.12.0" launch="&launch;" pluginURL="&pluginURL;" icon="paint-brush" support="https://github.com/&github;">
+
+<CHANGES>
+###ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING###
+
+###2026.06.20 - First release
+Forked from Squid's CA Cleanup Appdata (ca.cleanup.appdata) version 2024.11.28, then revived and modernized for current Unraid. Added since the fork:
+
+Fixes and safety:
+- Works on current Unraid 6.4+/7.x: AJAX requests now send the csrf_token that modern Unraid requires
+- Server-side path confinement: deletions are restricted to the appdata share and never cross a mount boundary
+- Canonical path matching: handles trailing-slash and cache/user differences and custom appdata pools (any /mnt/&lt;pool&gt;), so in-use folders are not surfaced as orphans
+- Ignores "borrowed" appdata (a folder owned by one app but mounted by another)
+
+Features:
+- Size shown next to each orphaned folder (du, cached by mtime)
+- Docker Compose awareness: appdata used by Compose Manager stacks (including stopped/down stacks and ${ENV}/.env paths) is protected
+- ZFS dataset support: detected, badged, and removed with a gated zfs destroy (auto -r), with a snapshot-loss warning
+- Ignore list to permanently protect folders that are not container appdata
+- Optional filesystem scan for template-less orphaned folders
+- Stale-template cleaner: list and delete saved templates whose container is gone
+- Capture Diagnostics button, plus diagnostics to the system log
+
+Other:
+- Cleaner, theme-aware UI; removed a stray debug file write on every page load
+- Renamed to appdata.cleanup.ng; original credited to Andrew Zawadzki (Squid)
+</CHANGES>
+
+<!-- The 'pre-install' script. -->
+<FILE Run="/usr/bin/php">
+<INLINE>
+<![CDATA[
+<?
+  $version = parse_ini_file("/etc/unraid-version");
+
+  if ( version_compare($version['version'],"6.12.0", "<") )
+  {
+    echo "********************************************************************\n";
+    echo "\n";
+    echo "Appdata Cleanup NG requires Unraid version 6.12.0 or greater to run\n";
+    echo "\n";
+    echo "********************************************************************\n";
+    exit(1);
+  }
+?>
+]]>
+</INLINE>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE>
+# Remove old 'source' files
+rm -f $(ls /boot/config/plugins/&name;/&name;*.txz 2>/dev/null &#124; grep -v '&version;')
+</INLINE>
+</FILE>
+
+<!--
+The 'source' file.
+-->
+<FILE Name="/boot/config/plugins/&name;/&name;-&version;-x86_64-1.txz" Run="upgradepkg --install-new">
+<URL>https://raw.githubusercontent.com/&github;/master/archive/&name;-&version;-x86_64-1.txz</URL>
+<MD5>&md5;</MD5>
+</FILE>
+
+<!--
+The 'post-install' script
+-->
+<FILE Run="/bin/bash">
+<INLINE>
+echo ""
+echo "----------------------------------------------------"
+echo " &name; has been installed."
+echo " Revived 2026 by chodeus"
+echo " Original by Andrew Zawadzki (Squid), 2015-2024"
+echo " Version: &version;"
+echo "----------------------------------------------------"
+echo ""
+</INLINE>
+</FILE>
+
+<!--
+The 'remove' script.
+-->
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+removepkg &name;-&version;-x86_64-1
+rm -rf &plugdir;
+rm -rf /boot/config/plugins/&name;
+</INLINE>
+</FILE>
+</PLUGIN>

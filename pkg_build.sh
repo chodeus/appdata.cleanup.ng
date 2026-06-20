@@ -1,5 +1,5 @@
 #!/bin/bash
-cd source/ca.cleanup.appdata
+cd source/appdata.cleanup.ng
 chmod 0755 -R .
-pkg_build.sh
+./pkg_build.sh
 

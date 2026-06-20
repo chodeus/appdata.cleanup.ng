@@ -1,7 +1,7 @@
 #!/bin/bash
 
-mkdir -p "/tmp/GitHub/ca.cleanup.appdata/source/ca.cleanup.appdata/usr/local/emhttp/plugins/ca.cleanup.appdata/"
+mkdir -p "/tmp/GitHub/appdata.cleanup.ng/source/appdata.cleanup.ng/usr/local/emhttp/plugins/appdata.cleanup.ng/"
 
-cp /usr/local/emhttp/plugins/ca.cleanup.appdata/* /tmp/GitHub/ca.cleanup.appdata/source/ca.cleanup.appdata/usr/local/emhttp/plugins/ca.cleanup.appdata -R -v -p
+cp /usr/local/emhttp/plugins/appdata.cleanup.ng/* /tmp/GitHub/appdata.cleanup.ng/source/appdata.cleanup.ng/usr/local/emhttp/plugins/appdata.cleanup.ng -R -v -p
 find . -maxdepth 9999 -noleaf -type f -name "._*" -exec rm -v "{}" \;
 

@@ -1,0 +1,262 @@
+Menu="Utilities"
+Title="Cleanup Appdata"
+Icon="paint-brush"
+---
+<?
+require_once("/usr/local/emhttp/plugins/appdata.cleanup.ng/include/caCredits.php");
+require_once("/usr/local/emhttp/plugins/appdata.cleanup.ng/include/helpers.php");
+
+$plugin = "appdata.cleanup.ng";
+$dockerRunning = is_dir("/var/lib/docker/tmp") ? "true" : "false";
+$acngDockerCfg = @my_parse_ini_file("/boot/config/docker.cfg");
+$acngAppdataLoc = isset($acngDockerCfg['DOCKER_APP_CONFIG_PATH']) ? rtrim($acngDockerCfg['DOCKER_APP_CONFIG_PATH'],"/") : "/mnt/user/appdata";
+if ( ! isset($var) || ! is_array($var) ) $var = @parse_ini_file("/var/local/emhttp/var.ini");
+$csrfToken = isset($var['csrf_token']) ? $var['csrf_token'] : "";
+
+function tr($string,$ret=false) {
+	$string = str_replace('"',"&#34;",str_replace("'","&#39;",_($string)));
+	if ( $ret )
+		return $string;
+	else
+		echo $string;
+}
+?>
+<style>
+.acng-intro { margin:6px 0 10px; opacity:.95; font-size:1.05em; line-height:1.4; }
+.acng-bullets { margin:0 0 14px; padding-left:22px; opacity:.9; font-size:1em; line-height:1.5; }
+.acng-bullets li { margin:3px 0; }
+.acng-detected { margin:0 0 14px; font-size:.95em; opacity:.9; }
+.acng-detected code { padding:1px 6px; border-radius:3px; background:rgba(128,128,128,.15); }
+.acng-detected-note { opacity:.65; font-size:.9em; }
+.acng-notice { padding:.8rem 1rem; border:1px solid rgba(230,140,0,.6); border-left:5px solid #e67e00; background:rgba(230,140,0,.15); border-radius:6px; margin:12px 0 18px; font-weight:600; }
+.acng-notice .acng-warn { font-size:1.25em; margin-right:4px; }
+.acng-toolbar { display:flex; align-items:center; flex-wrap:wrap; margin:8px 0; }
+.acng-toolbar > * { margin:2px 10px 2px 0; }
+.acng-fsopt { font-size:.9em; opacity:.85; }
+.acng-list { margin:10px 0; border:1px solid rgba(128,128,128,.2); border-radius:6px; overflow:hidden; }
+.acng-row { display:flex; align-items:center; border-bottom:1px solid rgba(128,128,128,.15); }
+.acng-row:last-child { border-bottom:0; }
+.acng-row:hover { background:rgba(128,128,128,.08); }
+.acng-rowmain { display:flex; align-items:center; padding:7px 12px; flex:1; cursor:pointer; min-width:0; }
+.acng-rowmain > * + * { margin-left:12px; }
+.acng-app { font-weight:600; min-width:150px; }
+.acng-path { flex:1; opacity:.65; font-family:monospace; font-size:.88em; word-break:break-all; }
+.acng-size { opacity:.6; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.acng-ignore { padding:0 12px; font-size:.8em; opacity:.55; cursor:pointer; white-space:nowrap; }
+.acng-ignore:hover { opacity:1; color:#c0392b; }
+.acng-section { padding:8px 12px; background:rgba(230,140,0,.10); border-bottom:1px solid rgba(128,128,128,.15); font-size:.85em; font-weight:600; }
+.acng-empty { padding:14px; opacity:.7; }
+.acng-zfs { display:inline-block; margin-left:8px; padding:0 6px; font-size:.7em; font-weight:600; color:#fff; background:#7e57c2; border-radius:3px; vertical-align:middle; }
+.acng-notpl { display:inline-block; margin-left:8px; padding:0 6px; font-size:.7em; font-weight:600; color:#fff; background:#e67e00; border-radius:3px; vertical-align:middle; }
+.acng-ignored { margin:12px 0; padding:8px 12px; border:1px dashed rgba(128,128,128,.3); border-radius:6px; }
+.acng-sub { font-weight:600; font-size:.85em; opacity:.7; margin-bottom:6px; }
+.acng-irow { display:flex; align-items:center; padding:3px 0; }
+.acng-irow > * + * { margin-left:12px; }
+.acng-ipath { flex:1; opacity:.6; font-family:monospace; font-size:.85em; word-break:break-all; }
+.acng-unignore { font-size:.8em; opacity:.6; cursor:pointer; white-space:nowrap; }
+.acng-unignore:hover { opacity:1; color:#3498db; }
+.acng-templates { margin:12px 0; padding:8px 12px; border:1px dashed rgba(230,140,0,.4); border-radius:6px; }
+.acng-tname { font-weight:600; min-width:150px; }
+.acng-danger { padding:.7rem 1rem; border:1px solid rgba(204,0,0,.4); border-radius:6px; background:rgba(204,0,0,.08); margin:14px 0; }
+.acng-danger-label { font-weight:600; color:rgba(255,80,80,.9); margin-bottom:8px; }
+.acng-zfs-opt { display:block; margin-bottom:8px; font-size:.9em; opacity:.85; }
+#deleteButton:not(:disabled) { background:#a02020; color:#fff; border-color:#7a1818; }
+#deleteButton:not(:disabled):hover { background:#b92828; }
+input[type='button'].acng-tpl-delete { background:#a02020; color:#fff; border-color:#7a1818; }
+input[type='button'].acng-tpl-delete:hover { background:#b92828; }
+</style>
+<script>
+var caURL = "/plugins/appdata.cleanup.ng/include/exec.php";
+var csrf_token = "<?=$csrfToken?>";
+
+$(function() {
+	if ( typeof caPluginUpdateCheck === "function" ) {
+		caPluginUpdateCheck("appdata.cleanup.ng.plg",{name:"Cleanup Appdata"},function(data) {
+			var result = JSON.parse(data);
+			$("#version").html(result.installedVersion);
+		});
+	}
+	if ( typeof addBannerWarning === "function" ) {
+		addBannerWarning("<?tr("The author takes no responsibility if you blindly accept the folders offered to delete")?>",false,true);
+	}
+	$(document).on("change",".appdata",function(){ updateDeleteButton(); updateSelectAllLabel(); });
+	if ( "<?=$dockerRunning?>" == "false" ) {
+		swal({
+			title: "<?tr("Docker Not Running")?>",
+			text: "<?tr("Because the docker service is not currently running, this module will prompt you to delete the appdata for any/all docker applications which are installed.")?>",
+			type: "warning"
+		});
+	}
+	loadAppdata();
+});
+
+function updateDeleteButton() {
+	$("#deleteButton").prop("disabled", $(".appdata:checked").length === 0);
+}
+
+function updateSelectAllLabel() {
+	var boxes = $(".appdata");
+	var allChecked = boxes.length > 0 && boxes.filter(":checked").length === boxes.length;
+	$("#selectAll").val(allChecked ? "<?tr("Deselect All")?>" : "<?tr("Select All")?>");
+}
+
+function toggleSelectAll() {
+	var boxes = $(".appdata");
+	var allChecked = boxes.length > 0 && boxes.filter(":checked").length === boxes.length;
+	boxes.prop("checked", !allChecked);
+	updateDeleteButton();
+	updateSelectAllLabel();
+}
+
+function ignoreThis(el) {
+	$.post(caURL,{action:'ignorePath',path:$(el).data('path'),csrf_token:csrf_token},function(){ loadAppdata(); });
+}
+
+function unignoreThis(el) {
+	$.post(caURL,{action:'unignorePath',path:$(el).data('path'),csrf_token:csrf_token},function(){ loadAppdata(); });
+}
+
+function deleteSelectedTemplates() {
+	var files = "", sep = "";
+	$('.staletpl:checked').each(function(){ files += sep + $(this).val(); sep = "*"; });
+	if ( ! files ) return;
+	swal({
+		title: "<?tr("Delete selected templates?")?>",
+		text: "<?tr("This removes the saved container config for the selected templates only - not images or containers. You can re-add them later from Community Applications.")?>",
+		type: "warning",
+		showCancelButton: true,
+		confirmButtonText: "<?tr("Delete templates")?>",
+		closeOnConfirm: true
+	}, function() {
+		$.post(caURL,{action:'deleteTemplates',files:files,csrf_token:csrf_token},function(){ loadAppdata(); });
+	});
+}
+
+function toggleSelectAllTemplates(btn) {
+	var boxes = $('.staletpl');
+	var all = boxes.length > 0 && boxes.filter(':checked').length === boxes.length;
+	boxes.prop('checked', !all);
+	$(btn).val(all ? "<?tr("Select All")?>" : "<?tr("Deselect All")?>");
+}
+
+function showCredits() {
+	myAlert("Appdata Cleanup NG","<?=$caCredits?>","/plugins/<?=$plugin?>/images/appdata.cleanup.ng.png","96x96", true, false, true);
+}
+
+function myAlert(description,textdescription,textimage,imagesize, outsideClick, showCancel, showConfirm, alertType) {
+	if ( !outsideClick ) outsideClick = false;
+	if ( !showCancel )   showCancel = false;
+	if ( !showConfirm )  showConfirm = false;
+	if ( imagesize == "" ) { imagesize = "80x80"; }
+	swal({
+		title: description,
+		text: textdescription,
+		imageUrl: textimage,
+		imageSize: imagesize,
+		allowOutsideClick: outsideClick,
+		showConfirmButton: showConfirm,
+		showCancelButton: showCancel,
+		type: alertType,
+		html: true
+	});
+}
+
+function loadAppdata() {
+	$("#settings").html("<img src='/plugins/appdata.cleanup.ng/images/spinner2.gif' width='48px'> <?tr("Finding orphaned appdata")?>");
+	$.post(caURL,{action:'getOrphanAppdata',fsscan:($('#fsScan').is(':checked')?'yes':'no'),stale:($('#staleScan').is(':checked')?'yes':'no'),csrf_token:csrf_token},function(data) {
+		$("#settings").html(data || "");
+		$("#selectAll").prop("disabled", $('.appdata').length === 0);
+		updateDeleteButton();
+		updateSelectAllLabel();
+	});
+	$("#deleteButton").prop("disabled",true);
+}
+
+function deleteAppdata() {
+	var paths = "";
+	var separator = "";
+	var zfsCount = 0;
+	$('.appdata').each(function() {
+		if ( $(this).prop("checked") ) {
+			if ( paths ) {
+				separator = "*";
+			}
+			paths = paths + separator + $(this).val();
+			if ( $(this).data("zfs") ) zfsCount++;
+		}
+	});
+
+	var displayPaths = paths.replace(/\*/g,", ");
+	var zfsWarn = "";
+	if ( zfsCount > 0 ) {
+		if ( $('#zfsEnable').is(':checked') ) {
+			zfsWarn = "<br><br><b style='color:#c0392b'>&#9888; " + zfsCount + " <?tr("ZFS dataset(s) selected - these are removed with zfs destroy, which also deletes their snapshots (no recovery).")?></b>";
+		} else {
+			zfsWarn = "<br><br><b style='color:#e67e00'>&#9888; " + zfsCount + " <?tr("ZFS dataset(s) selected but ZFS deletion is off - they will be skipped. Enable it in the Danger Zone to remove them.")?></b>";
+		}
+	}
+	swal({
+		title: "<?tr("Are You Sure?")?>",
+		text: "<?tr("Are you sure you want to delete these folders? Read this carefully as there is no recovery in the event of a mistake")?><br><b><font color='red'>" + displayPaths+"</font></b>" + zfsWarn,
+		type: "warning",
+		html: true,
+		closeOnConfirm: false,
+		showCancelButton: true,
+		confirmButtonText: "<?tr("Delete")?>",
+		showLoaderOnConfirm: true
+	}, function() {
+		swal("<?tr("Deleting Folders")?>","<?tr("Depending upon the size of the folders, this may take a few minutes")?>","info");
+		$.post(caURL,{action:'deleteAppdata',paths:paths,zfs:($('#zfsEnable').is(':checked')?'yes':'no'),csrf_token:csrf_token},function(data) {
+			if (data) {
+				swal("<?tr("Deleted")?>","","success");
+				loadAppdata();
+			}
+		});
+	});
+}
+
+function captureDiagnostics() {
+	$.post(caURL,{action:'captureDiagnostics',csrf_token:csrf_token},function(data) {
+		var blob = new Blob([data], {type:'text/plain'});
+		var url = URL.createObjectURL(blob);
+		var a = document.createElement('a');
+		a.href = url; a.download = 'appdata.cleanup.ng-diagnostics.txt';
+		document.body.appendChild(a); a.click();
+		document.body.removeChild(a);
+		URL.revokeObjectURL(url);
+	});
+}
+</script>
+<div class='acng-intro'><?tr("These appdata folders are not used by any currently installed Docker application or compose stack. Select the ones you want to remove.")?></div>
+<ul class='acng-bullets'>
+	<li><?tr("Reads your saved Docker templates to map each app to its appdata folder.")?></li>
+	<li><?tr("Excludes anything in use by an installed container (running or stopped) or a Compose Manager stack.")?></li>
+	<li><?tr("Handles shared folders, cache/user and trailing-slash differences, and ZFS datasets (uses zfs destroy, opt-in).")?></li>
+	<li><?tr("Stays inside your appdata share and never crosses a mount boundary.")?></li>
+	<li><?tr("Won't list folders whose template was also deleted - use the filesystem scan below for those.")?></li>
+</ul>
+<div class='acng-detected'><?tr("Appdata location")?>: <code><?=htmlspecialchars($acngAppdataLoc)?></code> <span class='acng-detected-note'><?tr("(the pool, cache and /mnt/user views of the same folder are matched automatically, so custom pools work without configuration)")?></span></div>
+<div class='acng-notice'><span class='acng-warn'>&#9888;</span> <?tr("Always confirm each folder before deleting. A misconfigured app can offer up a folder you actually want to keep, and deletion is permanent and cannot be undone.")?></div>
+
+<div class='acng-toolbar'>
+	<input type='button' onclick='toggleSelectAll();' value='<?tr("Select All")?>' id='selectAll'>
+	<label class='acng-fsopt'><input type='checkbox' id='fsScan' onchange='loadAppdata();'> <?tr("Also scan the filesystem for folders with no saved template (less conservative)")?></label>
+	<label class='acng-fsopt'><input type='checkbox' id='staleScan' onchange='loadAppdata();'> <?tr("Show stale templates (no installed container)")?></label>
+</div>
+
+<span id='settings'></span>
+
+<div class='acng-danger'>
+	<div class='acng-danger-label'>&#9888; <?tr("Danger Zone: Appdata deletion only")?> &#8212; <?tr("permanently deletes the selected appdata folders; cannot be undone")?></div>
+	<label class='acng-zfs-opt'><input type='checkbox' id='zfsEnable'> <?tr("Allow ZFS dataset deletion (zfs destroy) for rows marked")?> <span class='acng-zfs'>ZFS</span></label>
+	<input type='button' id='deleteButton' onclick='deleteAppdata();' value='<?tr("Delete Selected")?>' disabled>
+</div>
+
+<div class='acng-toolbar'>
+	<input type='button' onclick='done();' value='<?tr("Exit")?>'>
+	<input type='button' onclick='captureDiagnostics();' value='<?tr("Capture Diagnostics")?>'>
+	<a style='cursor:pointer;margin-left:auto' onclick='showCredits();'><?tr("Credits")?></a>
+</div>
+
+<center><?tr("For support for this plugin, visit here:")?> <a href="https://github.com/chodeus/appdata.cleanup.ng" target="_blank"><?tr("HERE")?></a></center>
+<center><?tr("Plugin Version")?> <strong><span id='version'></span></strong></center>
