@@ -1,7 +1,7 @@
 MIT License
 
 Copyright (c) 2026 chodeus
-Based on CA Cleanup Appdata, Copyright (c) 2015-2024 Andrew Zawadzki (Squid)
+Copyright (c) 2015-2024 Andrew Zawadzki (Squid)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
