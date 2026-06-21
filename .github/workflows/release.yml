@@ -10,10 +10,10 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout master
+      - name: Checkout main
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
-          ref: master
+          ref: main
           fetch-depth: 0
 
       - name: Configure git
@@ -43,7 +43,7 @@ jobs:
         run: |
           git add -A
           git commit -m "Release ${{ steps.version.outputs.version }}"
-          git push origin master
+          git push origin main
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
@@ -54,7 +54,7 @@ jobs:
             ## Appdata Cleanup NG v${{ steps.version.outputs.version }}
 
             Install in Unraid (Plugins > Install Plugin):
-            `https://raw.githubusercontent.com/chodeus/appdata.cleanup.ng/master/plugins/appdata.cleanup.ng.plg`
+            `https://raw.githubusercontent.com/chodeus/appdata.cleanup.ng/main/plugins/appdata.cleanup.ng.plg`
 
             See the manifest CHANGES for details.
           files: archive/${{ steps.version.outputs.file }}

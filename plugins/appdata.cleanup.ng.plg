@@ -7,7 +7,7 @@
 <!ENTITY launch    "Settings/CleanUpAppdata">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "chodeus/appdata.cleanup.ng">
-<!ENTITY pluginURL "https://raw.githubusercontent.com/&github;/master/plugins/&name;.plg">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/&github;/main/plugins/&name;.plg">
 ]>
 
 <PLUGIN name="&name;" author="&author;" version="&version;" min="6.12.0" launch="&launch;" pluginURL="&pluginURL;" icon="paint-brush" support="https://github.com/&github;">
@@ -72,7 +72,7 @@ rm -f $(ls /boot/config/plugins/&name;/&name;*.txz 2>/dev/null &#124; grep -v '&
 The 'source' file.
 -->
 <FILE Name="/boot/config/plugins/&name;/&name;-&version;-x86_64-1.txz" Run="upgradepkg --install-new">
-<URL>https://raw.githubusercontent.com/&github;/master/archive/&name;-&version;-x86_64-1.txz</URL>
+<URL>https://raw.githubusercontent.com/&github;/main/archive/&name;-&version;-x86_64-1.txz</URL>
 <MD5>&md5;</MD5>
 </FILE>
 

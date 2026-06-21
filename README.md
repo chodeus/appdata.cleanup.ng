@@ -16,7 +16,7 @@ and delete them. A modernized revival of Andrew Zawadzki's (Squid) original
 Unraid → **Plugins → Install Plugin**, and paste:
 
 ```
-https://raw.githubusercontent.com/chodeus/appdata.cleanup.ng/master/plugins/appdata.cleanup.ng.plg
+https://raw.githubusercontent.com/chodeus/appdata.cleanup.ng/main/plugins/appdata.cleanup.ng.plg
 ```
 
 Then open **Settings → Cleanup Appdata**.
