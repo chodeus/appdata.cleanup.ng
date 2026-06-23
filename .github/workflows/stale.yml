@@ -5,6 +5,15 @@ on:
     - cron: '0 5 * * *'  # daily
   workflow_dispatch:
 
+# The reusable stale-issues.yml requests issues:/pull-requests: write.
+# This repo's default GITHUB_TOKEN is read-only, and a reusable workflow
+# cannot exceed the caller's grant — without this block the run fails at
+# startup. Granting them here keeps the fix least-privilege (vs flipping
+# the repo-wide default to write).
+permissions:
+  issues: write
+  pull-requests: write
+
 jobs:
   stale:
     uses: chodeus/chodeus-ops/.github/workflows/stale-issues.yml@2a3661ac2b92d2da482640228e5202486550656f # main
