@@ -15,11 +15,22 @@ switch ($_POST['action']) {
 case 'getOrphanAppdata':
 	libxml_use_internal_errors(true);
   $all_files = glob("/boot/config/plugins/dockerMan/templates-user/*.xml");
-  if ( is_dir("/var/lib/docker/tmp") ) {
+  $dockerRunning = is_dir("/var/lib/docker/tmp");
+  $dockerHealthy = true;
+  if ( $dockerRunning ) {
     $DockerClient = new DockerClient();
     $info = $DockerClient->getDockerContainers();
+    # getDockerContainers() returns [] for BOTH "no containers" and an API failure; disambiguate before trusting it
+    if ( empty($info) ) $dockerHealthy = appdataCleanupNgDockerEngineReachable($DockerClient);
   } else {
     $info = array();
+  }
+
+  # fail closed: if Docker is running but unreachable, the in-use set is untrustworthy -> offer nothing rather than risk a live folder
+  if ( $dockerRunning && ! $dockerHealthy ) {
+    appdataCleanupNgLog("docker engine unreachable during scan; offered nothing (fail closed)",LOG_WARNING);
+    echo "<div class='acng-empty'>Could not query the Docker engine, so in-use appdata can't be determined. Nothing is being offered, to avoid deleting folders that are actually in use. Reload once Docker is responsive.</div>";
+    break;
   }
 
   $availableVolumes = array();
@@ -116,7 +127,8 @@ case 'getOrphanAppdata':
   $availableVolumes = $tempArray;
 
   # remove folders claimed by docker-compose stacks (Compose Manager), incl. 'down' stacks
-  $composeProtected = appdataCleanupNgComposeReferencedPaths();
+  $composeUncertain = false;
+  $composeProtected = appdataCleanupNgComposeReferencedPaths($composeUncertain);
   if ( ! empty($composeProtected) ) {
     $composeSet = array_flip($composeProtected);
     foreach ( $availableVolumes as $key => $volume ) {
@@ -140,14 +152,30 @@ case 'getOrphanAppdata':
 
   # opt-in: filesystem scan for template-less folders not covered by any template, container, or compose stack
   $fsOrphans = array();
+  $fsScanSkipped = "";
   if ( getPost("fsscan","no") === "yes" ) {
-    $coveredSegs = $templateSegs;
-    foreach ( $inUse as $u => $unused ) { $s = appdataCleanupNgOwnerSegment($u); if ( $s !== "" ) $coveredSegs[$s] = true; }
-    foreach ( $composeProtected as $p ) { $s = appdataCleanupNgOwnerSegment($p); if ( $s !== "" ) $coveredSegs[$s] = true; }
-    $fsOrphans = appdataCleanupNgFilesystemOrphans($coveredSegs);
-    foreach ( $fsOrphans as $key => $volume ) {
-      if ( appdataCleanupNgIsIgnored($volume['HostDir']) || ! appdataCleanupNgPathWithinAppdata($volume['HostDir']) ) unset($fsOrphans[$key]);
+    # a container that bind-mounts an entire appdata root makes every child "in use"; offering template-less children then is unsafe
+    $rootMounted = false;
+    foreach ( appdataCleanupNgAppdataRoots() as $r ) {
+      $rc = appdataCleanupNgCanon($r);
+      foreach ( $inUse as $u => $unused ) {
+        if ( $u === $rc || strpos($rc."/",$u."/") === 0 ) { $rootMounted = true; break 2; }
+      }
     }
+    if ( $composeUncertain ) {
+      $fsScanSkipped = "A Docker Compose stack references an unresolved \${VAR} host path, so the scan can't tell which folders are in use. Define it in the project .env to enable the scan.";
+    } else if ( $rootMounted ) {
+      $fsScanSkipped = "A running container bind-mounts an entire appdata root, so every folder is in use. The filesystem scan is disabled to avoid offering in-use folders.";
+    } else {
+      $coveredSegs = $templateSegs;
+      foreach ( $inUse as $u => $unused ) { $s = appdataCleanupNgOwnerSegment($u); if ( $s !== "" ) $coveredSegs[$s] = true; }
+      foreach ( $composeProtected as $p ) { $s = appdataCleanupNgOwnerSegment($p); if ( $s !== "" ) $coveredSegs[$s] = true; }
+      $fsOrphans = appdataCleanupNgFilesystemOrphans($coveredSegs);
+      foreach ( $fsOrphans as $key => $volume ) {
+        if ( appdataCleanupNgIsIgnored($volume['HostDir']) || ! appdataCleanupNgPathWithinAppdata($volume['HostDir']) ) unset($fsOrphans[$key]);
+      }
+    }
+    if ( $fsScanSkipped !== "" ) appdataCleanupNgLog("fsscan skipped (fail closed): ".$fsScanSkipped,LOG_WARNING);
   }
 
   # log one line per scan so "nothing showed up" is diagnosable without UI noise
@@ -155,11 +183,12 @@ case 'getOrphanAppdata':
     count($all_files), count($info), count($composeProtected), count($availableVolumes),
     is_dir("/var/lib/docker/tmp") ? "" : " [docker service not running]"));
 
-  $renderRow = function($volume,$noTemplate=false) {
+  $renderRow = function($volume,$noTemplate=false,$mounted=false) {
     $sizeLabel = appdataCleanupNgFormatBytes(appdataCleanupNgFolderSizeBytes($volume['HostDir']));
     $zfs = appdataCleanupNgResolveZfsDataset($volume['HostDir']);
     $badges = "";
-    if ( $zfs !== "" ) $badges .= "<span class='acng-zfs' title='ZFS dataset: ".htmlspecialchars($zfs)."'>ZFS</span>";
+    if ( $zfs !== "" ) $badges .= "<span class='acng-zfs' title='ZFS dataset: ".htmlspecialchars($zfs,ENT_QUOTES)."'>ZFS</span>";
+    if ( $mounted ) $badges .= "<span class='acng-notpl' title='A running container bind-mounts a parent of this folder - it may still be in use'>in use by mount</span>";
     if ( $noTemplate ) $badges .= "<span class='acng-notpl' title='No saved template references this folder'>no template</span>";
     $h = htmlspecialchars($volume['HostDir'],ENT_QUOTES);
     $zfsAttr = $zfs !== "" ? " data-zfs='1'" : "";
@@ -174,11 +203,22 @@ case 'getOrphanAppdata':
          . "</div>";
   };
 
+  if ( $fsScanSkipped !== "" ) {
+    echo "<div class='acng-empty'>&#9888; ".htmlspecialchars($fsScanSkipped)."</div>";
+  }
   if ( empty($availableVolumes) && empty($fsOrphans) ) {
     echo "<div class='acng-empty'>No orphaned appdata folders found.</div>";
   } else {
     echo "<div class='acng-list'>";
-    foreach ($availableVolumes as $volume) echo $renderRow($volume,false);
+    foreach ($availableVolumes as $volume) {
+      # badge (don't hide) a real orphan that also sits under a broad in-use bind mount, so the user is warned it may be live
+      $mounted = false;
+      $cand = appdataCleanupNgCanon($volume['HostDir']);
+      foreach ($inUse as $u => $unused) {
+        if ( $u !== $cand && strpos($cand."/",$u."/") === 0 ) { $mounted = true; break; }
+      }
+      echo $renderRow($volume,false,$mounted);
+    }
     if ( ! empty($fsOrphans) ) {
       echo "<div class='acng-section'>&#9888; No saved template &mdash; found by filesystem scan. Verify carefully before deleting.</div>";
       foreach ($fsOrphans as $volume) echo $renderRow($volume,true);
@@ -225,11 +265,13 @@ case 'getOrphanAppdata':
   break;
 
 case "deleteAppdata":
-  $paths = getPost("paths","no");
-  $paths = explode("*",$paths);
+  # array param avoids the old "*"-separator collision (a folder whose name contains "*" split into two real siblings)
+  $paths = ( isset($_POST['paths']) && is_array($_POST['paths']) ) ? $_POST['paths'] : explode("*",(string)getPost("paths",""));
   $zfsEnabled = getPost("zfs","no") === "yes";
   $refused = array();
   foreach ($paths as $path) {
+    $path = (string)$path;
+    if ( $path === "" ) continue;
     if ( ! appdataCleanupNgPathWithinAppdata($path) ) {
       $refused[] = $path." (outside appdata)";
       continue;
@@ -256,7 +298,19 @@ case "deleteAppdata":
       continue;
     }
     $userPath = str_replace("/mnt/cache/","/mnt/user/",$path);
-    exec ("rm -rf ".escapeshellarg($userPath));
+    # resolve symlinks and re-confine the PHYSICAL target before deleting: the guards above run on the submitted
+    # string, but a symlinked path component would otherwise let rm -rf act outside appdata (verified: GNU rm
+    # follows an intermediate symlinked component and a trailing-slash leaf symlink). rm exactly what we validated.
+    $real = @realpath($userPath);
+    if ( $real === false ) {
+      $refused[] = $path." (not found)";
+      continue;
+    }
+    if ( ! appdataCleanupNgPathWithinAppdata($real) || appdataCleanupNgIsMountPoint($real) ) {
+      $refused[] = $path." (resolves outside appdata or across a mount)";
+      continue;
+    }
+    exec ("rm -rf ".escapeshellarg($real));
   }
   if ( ! empty($refused) ) {
     appdataCleanupNgLog("refused/failed delete: ".implode(", ",$refused),LOG_WARNING);
@@ -279,10 +333,30 @@ case "unignorePath":
   break;
 
 case "deleteTemplates":
-  $files = explode("*",getPost("files",""));
-  $n = 0;
-  foreach ( $files as $f ) if ( appdataCleanupNgDeleteTemplate($f) ) $n++;
-  appdataCleanupNgLog("deleted ".$n." stale template(s)",LOG_INFO);
+  $files = ( isset($_POST['files']) && is_array($_POST['files']) ) ? $_POST['files'] : explode("*",(string)getPost("files",""));
+  # staleness can only be judged from the live container list; if we can't read it, refuse (fail closed) rather than
+  # treat an empty list as "everything is stale" and delete the saved config of a running app
+  if ( ! is_dir("/var/lib/docker/tmp") ) {
+    appdataCleanupNgLog("deleteTemplates refused: docker service not running (can't confirm staleness)",LOG_WARNING);
+    echo "docker not running"; break;
+  }
+  $dc = new DockerClient();
+  $info = $dc->getDockerContainers();
+  if ( empty($info) && ! appdataCleanupNgDockerEngineReachable($dc) ) {
+    appdataCleanupNgLog("deleteTemplates refused: docker engine unreachable (can't confirm staleness)",LOG_WARNING);
+    echo "docker unreachable"; break;
+  }
+  $installedNames = array();
+  foreach ( (array)$info as $c ) if ( ! empty($c['Name']) ) $installedNames[] = $c['Name'];
+  $staleFiles = array();
+  foreach ( appdataCleanupNgStaleTemplates($installedNames) as $t ) $staleFiles[$t['file']] = true;
+  $n = 0; $refused = 0;
+  foreach ( $files as $f ) {
+    $f = (string)$f;
+    if ( ! isset($staleFiles[$f]) ) { $refused++; continue; }   # not a currently-stale template -> refuse
+    if ( appdataCleanupNgDeleteTemplate($f) ) $n++;
+  }
+  appdataCleanupNgLog("deleted ".$n." stale template(s)".($refused ? ", refused ".$refused." non-stale" : ""),LOG_INFO);
   echo "deleted ".$n;
   break;
 

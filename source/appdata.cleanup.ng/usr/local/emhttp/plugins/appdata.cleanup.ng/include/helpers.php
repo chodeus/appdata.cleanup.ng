@@ -13,12 +13,12 @@
 
 if ( ! function_exists("my_parse_ini_file") ) {
   function my_parse_ini_file($file,$mode=false,$scanner_mode=INI_SCANNER_NORMAL) {
-    return parse_ini_string(preg_replace('/^#.*\\n/m', "", @file_get_contents($file)),$mode,$scanner_mode);
+    return parse_ini_string(preg_replace('/^#.*(?:\\n|$)/m', "", @file_get_contents($file)),$mode,$scanner_mode);
   }
 }
 if ( ! function_exists("my_parse_ini_string") ) {
   function my_parse_ini_string($string, $mode=false,$scanner_mode=INI_SCANNER_NORMAL) {
-    return parse_ini_string(preg_replace('/^#.*\\n/m', "", $string),$mode,$scanner_mode);
+    return parse_ini_string(preg_replace('/^#.*(?:\\n|$)/m', "", $string),$mode,$scanner_mode);
   }
 }
 
@@ -70,6 +70,15 @@ function dirContents($path) {
   return array_diff($dirContents,array(".",".."));
 }
 
+# getDockerContainers() returns [] for BOTH "no containers" and an API failure; probe /version to distinguish them.
+# returns true when an empty container list can be trusted as genuinely empty (engine reachable), false when the
+# engine is unreachable. On older Unraid whose DockerClient lacks getDockerJSON, assume reachable (legacy behaviour).
+function appdataCleanupNgDockerEngineReachable($dc) {
+  if ( ! is_object($dc) || ! method_exists($dc,"getDockerJSON") ) return true;
+  $code = 0; $ver = $dc->getDockerJSON("/version","GET",$code);
+  return ( is_array($ver) && ! empty($ver) );
+}
+
 # appdata share root(s) from docker.cfg; deletions are confined within these as a backstop against a crafted request escaping appdata
 function appdataCleanupNgAppdataRoots() {
   $dockerOptions = @my_parse_ini_file("/boot/config/docker.cfg");
@@ -79,10 +88,15 @@ function appdataCleanupNgAppdataRoots() {
   $share = basename($cfgPath);
   if ( $share === "" ) $share = "appdata";
   $roots = array($cfgPath,"/mnt/user/$share","/mnt/cache/$share");
-  return array_values(array_unique(array_filter($roots,"strlen")));
+  $roots = array_values(array_unique(array_filter($roots,"strlen")));
+  # safety floor: a confinement root must be at least /mnt/<pool>/<share>; never "/", "/mnt", or a bare pool root
+  # (a misconfigured DOCKER_APP_CONFIG_PATH like "/mnt/user" must not turn the whole share tree into a delete root)
+  $roots = array_values(array_filter($roots,function($r){ return preg_match('#^/mnt/[^/]+/[^/]+#',$r); }));
+  return $roots;
 }
 
 function appdataCleanupNgPathWithinAppdata($path) {
+  if ( preg_match('/[\x00-\x1f]/',(string)$path) ) return false;   # reject control chars / embedded newlines before any normalization
   $p = appdataCleanupNgCanon($path);
   if ( $p === "" || $p[0] !== "/" ) return false;
   if ( strpos("/".$p."/","/../") !== false ) return false; # reject traversal
@@ -162,7 +176,8 @@ function appdataCleanupNgIsMountPoint($path) {
   $rp = @realpath($path);
   if ( $rp === false || ! is_dir($rp) || $rp === "/" ) return false;
   $d = @stat($rp); $p = @stat(dirname($rp));
-  return ( is_array($d) && is_array($p) && $d['dev'] !== $p['dev'] );
+  if ( ! is_array($d) || ! is_array($p) ) return true;   # can't verify the mount boundary -> treat as a mount and refuse (fail closed)
+  return ( $d['dev'] !== $p['dev'] );
 }
 
 # destroy a dataset, auto-detecting whether -r is required (snapshots/children)
@@ -171,7 +186,17 @@ function appdataCleanupNgZfsDestroy($dataset) {
   if ( $ds === "" ) return array("ok"=>false,"recursive"=>false,"message"=>"missing dataset name");
   $o = array(); $rc = 1;
   @exec("zfs destroy -nvp ".escapeshellarg($ds)." 2>&1",$o,$rc);   # dry-run, non-recursive
-  $recursive = ( $rc !== 0 );                                       # needs -r if that failed
+  $recursive = false;
+  if ( $rc !== 0 ) {
+    # only escalate to a recursive wipe when the dataset genuinely has dependents (children/snapshots/clones);
+    # any other dry-run failure (busy, permission, pool error) must NOT silently trigger a `-r` subtree destroy
+    $err = strtolower(implode("\n",$o));
+    if ( strpos($err,"child") !== false || strpos($err,"snapshot") !== false || strpos($err,"dependent") !== false || strpos($err,"clone") !== false ) {
+      $recursive = true;
+    } else {
+      return array("ok"=>false,"recursive"=>false,"message"=>"dry-run failed, not escalating to -r: ".trim(implode("\n",$o)));
+    }
+  }
   $o = array(); $rc = 1;
   @exec("zfs destroy ".($recursive ? "-r " : "").escapeshellarg($ds)." 2>&1",$o,$rc);
   return array("ok"=>($rc===0),"recursive"=>$recursive,"message"=>trim(implode("\n",$o)));
@@ -353,6 +378,7 @@ function appdataCleanupNgFolderSizeBytes($path) {
   if ( $bytes >= 0 ) {
     $cache[$real] = array((int)$mtime,$bytes);
     @file_put_contents($cacheFile,json_encode($cache),LOCK_EX);
+    @chmod($cacheFile,0600);   # size cache is display-only; keep it root-owned/private in world-writable /var/tmp
   }
   return $bytes;
 }
@@ -393,7 +419,8 @@ function appdataCleanupNgExpandEnv($text,$env) {
   return $text;
 }
 
-function appdataCleanupNgComposeReferencedPaths() {
+function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
+  $uncertain = false;   # set true when a compose file can't be read or still has an unresolved ${VAR} bind host -> callers must fail closed
   $projectsDir = "/boot/config/plugins/compose.manager/projects";
   if ( ! is_dir($projectsDir) ) return array();
   $roots = appdataCleanupNgAppdataRoots();
@@ -427,8 +454,16 @@ function appdataCleanupNgComposeReferencedPaths() {
     foreach ( $files as $f ) {
       if ( ! is_file($f) ) continue;
       $contents = @file_get_contents($f);
-      if ( $contents === false || $contents === "" ) continue;
+      if ( $contents === false ) { $uncertain = true; continue; }   # an existing compose file we couldn't read -> protection is incomplete
+      if ( $contents === "" ) continue;
       $contents = appdataCleanupNgExpandEnv($contents,$env);
+      # a VOLUME BIND whose host side still has an unresolved ${VAR}/$VAR means we can't know which appdata folder it maps to.
+      # scope to bind positions to avoid disabling fsscan on unrelated $VARs: short syntax "- ${VAR}/path:/container"
+      # (the [^\n:=] host guard excludes "KEY=val" environment items), and long syntax "source: ${VAR}...".
+      if ( preg_match('#^[ \t]*-[ \t]*["\']?[^\n:=]*\$\{?[A-Za-z_][^\n:]*:/#m',$contents)
+        || preg_match('#^[ \t]*source[ \t]*:[ \t]*["\']?[^\n]*\$[A-Za-z_{]#m',$contents) ) {
+        $uncertain = true;
+      }
       if ( preg_match_all($pattern,$contents,$matches,PREG_SET_ORDER) ) {
         foreach ( $matches as $hit ) {
           $firstSeg = strtok($hit[2],"/");         # appdata folder name under the root

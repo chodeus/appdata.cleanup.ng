@@ -68,6 +68,7 @@ input[type='button'].acng-tpl-delete:hover { background:#b92828; }
 <script>
 var caURL = "/plugins/appdata.cleanup.ng/include/exec.php";
 var csrf_token = "<?=$csrfToken?>";
+function acngEscapeHtml(s){ return String(s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
 $(function() {
 	if ( typeof caPluginUpdateCheck === "function" ) {
@@ -117,9 +118,9 @@ function unignoreThis(el) {
 }
 
 function deleteSelectedTemplates() {
-	var files = "", sep = "";
-	$('.staletpl:checked').each(function(){ files += sep + $(this).val(); sep = "*"; });
-	if ( ! files ) return;
+	var files = [];
+	$('.staletpl:checked').each(function(){ files.push($(this).val()); });
+	if ( ! files.length ) return;
 	swal({
 		title: "<?tr("Delete selected templates?")?>",
 		text: "<?tr("This removes the saved container config for the selected templates only - not images or containers. You can re-add them later from Community Applications.")?>",
@@ -173,20 +174,16 @@ function loadAppdata() {
 }
 
 function deleteAppdata() {
-	var paths = "";
-	var separator = "";
+	var paths = [];
 	var zfsCount = 0;
 	$('.appdata').each(function() {
 		if ( $(this).prop("checked") ) {
-			if ( paths ) {
-				separator = "*";
-			}
-			paths = paths + separator + $(this).val();
+			paths.push($(this).val());
 			if ( $(this).data("zfs") ) zfsCount++;
 		}
 	});
 
-	var displayPaths = paths.replace(/\*/g,", ");
+	var displayPaths = paths.map(acngEscapeHtml).join(", ");
 	var zfsWarn = "";
 	if ( zfsCount > 0 ) {
 		if ( $('#zfsEnable').is(':checked') ) {

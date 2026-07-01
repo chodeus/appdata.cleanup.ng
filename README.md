@@ -23,7 +23,7 @@ Then open **Settings → Cleanup Appdata**.
 
 ## Differences from Squid's original
 
-- **Works on modern Unraid (6.4+/7.x).** The original no longer runs on current releases.
+- **Works on modern Unraid (6.10+/7.x).** The original no longer runs on current releases.
 - **Safer deletes.** Confined to the appdata share, never crosses a mount
   boundary, and a backstop independent of what the browser submits.
 - **ZFS-aware.** Dataset folders are removed with `zfs destroy` (opt-in), not a
@@ -43,7 +43,7 @@ This plugin is **beta**. Verified on the author's system:
 - Orphan detection — removed-container templates **and** the optional filesystem scan
 - Delete safety — appdata-share confinement, never crossing a mount boundary, and
   a backstop that doesn't trust what the browser submits (audited and unit-tested)
-- Build / install / uninstall on current Unraid (6.4+/7.x)
+- Build / install / uninstall on current Unraid (6.10+/7.x)
 
 Needs real-world confirmation — the author's box can't exercise these, so **reports are welcome**:
 
