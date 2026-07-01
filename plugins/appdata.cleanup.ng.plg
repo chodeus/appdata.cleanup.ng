@@ -13,48 +13,35 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" min="6.10.0" launch="&launch;" pluginURL="&pluginURL;" icon="paint-brush" support="https://github.com/&github;">
 
 <CHANGES>
-###ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING###
+###ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING
 
-###2026.07.01 - Safety &amp; security hardening
-Hardening pass on the delete path and orphan detection - no visible UI changes. Minimum Unraid raised to 6.10 (the release where the webGUI enforces CSRF on plugin requests, which this plugin relies on).
-
-Delete safety:
-- Deletions now resolve symlinks and re-confirm the real target is inside your appdata share before removing it, so a symlinked folder can't redirect a delete outside appdata
-- ZFS: a recursive `zfs destroy -r` is used only when the dataset genuinely has children/snapshots, never as a fallback on an unrelated error
-- Mount-boundary and path checks now fail safe (refuse) when they can't be verified, instead of proceeding
-- Selected folders are sent individually, so a folder name containing "*" can no longer affect a different folder
-
-Orphan detection (fewer false positives = safer):
-- If the Docker engine can't be queried, nothing is offered (rather than treating "no answer" as "no containers")
-- A Compose stack with an unresolved ${VAR} bind path, or a container that mounts your whole appdata share, now suppresses the optional filesystem scan
-- Folders sitting under a broad bind-mount are flagged "in use by mount"
-- The stale-template cleaner re-checks against the live container list and refuses if Docker can't be queried
-
-Other: hardened HTML escaping in the confirmation dialog; reject control characters in submitted paths; minor diagnostics and cache hardening.
+###2026.07.01 - Safety and security hardening
+- Minimum Unraid raised to 6.10 (required for CSRF enforcement)
+- Deletes resolve symlinks and re-check the target is inside appdata
+- ZFS: recursive destroy only when the dataset has children or snapshots
+- Path and mount checks now fail safe when they can't be verified
+- Folders are sent individually, so odd names can't hit the wrong one
+- Docker unreachable now offers nothing, avoiding false orphans
+- Unresolved Compose variables or whole-share mounts disable the filesystem scan
+- Folders under a broad bind-mount are flagged "in use by mount"
+- Stale-template delete re-checks the live container list
+- Hardened dialog escaping and input handling
 
 ###2026.06.20 - First release (BETA)
-BETA: orphan detection, delete-safety confinement, and install are verified on current Unraid. Custom appdata pools, ZFS dataset deletion, and Docker Compose coverage still need real-world testing - please report results (see the README "Status" section).
-
-Forked from Squid's CA Cleanup Appdata (ca.cleanup.appdata) version 2024.11.28, then revived and modernized for current Unraid. Added since the fork:
-
-Fixes and safety:
-- Works on current Unraid 6.10+/7.x: AJAX requests now send the csrf_token that modern Unraid requires
-- Server-side path confinement: deletions are restricted to the appdata share and never cross a mount boundary
-- Canonical path matching: handles trailing-slash and cache/user differences and custom appdata pools (any /mnt/&lt;pool&gt;), so in-use folders are not surfaced as orphans
-- Ignores "borrowed" appdata (a folder owned by one app but mounted by another)
-
-Features:
-- Size shown next to each orphaned folder (du, cached by mtime)
-- Docker Compose awareness: appdata used by Compose Manager stacks (including stopped/down stacks and ${ENV}/.env paths) is protected
-- ZFS dataset support: detected, badged, and removed with a gated zfs destroy (auto -r), with a snapshot-loss warning
-- Ignore list to permanently protect folders that are not container appdata
-- Optional filesystem scan for template-less orphaned folders
-- Stale-template cleaner: list and delete saved templates whose container is gone
-- Capture Diagnostics button, plus diagnostics to the system log
-
-Other:
-- Cleaner, theme-aware UI; removed a stray debug file write on every page load
-- Renamed to appdata.cleanup.ng; original credited to Andrew Zawadzki (Squid)
+- Beta: verified on current Unraid; pools, ZFS and Compose still need real-world testing
+- Forked from Squid's CA Cleanup Appdata and modernised for current Unraid
+- Works on Unraid 6.10+/7.x (sends the csrf_token modern Unraid needs)
+- Deletions confined to the appdata share, never crossing a mount boundary
+- Path matching handles cache/user, trailing slashes and custom pools
+- Skips "borrowed" appdata (owned by one app, mounted by another)
+- Shows each folder's size
+- Protects appdata used by Compose stacks, including down stacks
+- ZFS datasets removed with a gated zfs destroy and snapshot-loss warning
+- Ignore list for folders that aren't container appdata
+- Optional filesystem scan for template-less folders
+- Stale-template cleaner
+- Capture Diagnostics button and system-log output
+- Renamed to appdata.cleanup.ng; original by Andrew Zawadzki (Squid)
 </CHANGES>
 
 <!-- The 'pre-install' script. -->
