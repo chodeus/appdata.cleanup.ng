@@ -26,10 +26,10 @@ case 'getOrphanAppdata':
     $info = array();
   }
 
-  # fail closed: if Docker is running but unreachable, the in-use set is untrustworthy -> offer nothing rather than risk a live folder
-  if ( $dockerRunning && ! $dockerHealthy ) {
-    appdataCleanupNgLog("docker engine unreachable during scan; offered nothing (fail closed)",LOG_WARNING);
-    echo "<div class='acng-empty'>Could not query the Docker engine, so in-use appdata can't be determined. Nothing is being offered, to avoid deleting folders that are actually in use. Reload once Docker is responsive.</div>";
+  # fail closed: if Docker is stopped OR running-but-unreachable, the in-use set is untrustworthy -> offer nothing rather than risk a live folder
+  if ( ! $dockerRunning || ! $dockerHealthy ) {
+    appdataCleanupNgLog("docker service not running or unreachable during scan; offered nothing (fail closed)",LOG_WARNING);
+    echo "<div class='acng-empty'>Docker isn't running (or its engine can't be reached), so in-use appdata can't be determined. Nothing is being offered, to avoid deleting folders that are actually in use. Reload once Docker is responsive.</div>";
     break;
   }
 
@@ -268,6 +268,17 @@ case "deleteAppdata":
   # array param avoids the old "*"-separator collision (a folder whose name contains "*" split into two real siblings)
   $paths = ( isset($_POST['paths']) && is_array($_POST['paths']) ) ? $_POST['paths'] : explode("*",(string)getPost("paths",""));
   $zfsEnabled = getPost("zfs","no") === "yes";
+  # orphan status is only trustworthy from the live container list; if we can't read it, refuse (fail closed)
+  # rather than trust the client's submitted paths while the in-use set is unknowable (mirrors deleteTemplates)
+  if ( ! is_dir("/var/lib/docker/tmp") ) {
+    appdataCleanupNgLog("deleteAppdata refused: docker service not running (can't confirm orphan status)",LOG_WARNING);
+    echo "docker not running"; break;
+  }
+  $dcDel = new DockerClient();
+  if ( empty($dcDel->getDockerContainers()) && ! appdataCleanupNgDockerEngineReachable($dcDel) ) {
+    appdataCleanupNgLog("deleteAppdata refused: docker engine unreachable (can't confirm orphan status)",LOG_WARNING);
+    echo "docker unreachable"; break;
+  }
   $refused = array();
   foreach ($paths as $path) {
     $path = (string)$path;
@@ -281,6 +292,13 @@ case "deleteAppdata":
     if ( $dataset !== "" ) {
       if ( ! $zfsEnabled ) {
         $refused[] = $path." (ZFS dataset; enable ZFS deletion)";
+        continue;
+      }
+      # re-confine the resolved physical target (mirror the rm branch at 304-312): a symlink in
+      # appdata whose target is an external ZFS dataset must NOT be zfs-destroyed
+      $realZ = @realpath(str_replace("/mnt/cache/","/mnt/user/",$path));
+      if ( $realZ === false || ! appdataCleanupNgPathWithinAppdata($realZ) ) {
+        $refused[] = $path." (ZFS dataset resolves outside appdata)";
         continue;
       }
       $r = appdataCleanupNgZfsDestroy($dataset);
