@@ -165,7 +165,7 @@ case 'getOrphanAppdata':
     if ( $composeUncertain ) {
       $fsScanSkipped = "A Docker Compose stack references an unresolved \${VAR} host path, so the scan can't tell which folders are in use. Define it in the project .env to enable the scan.";
     } else if ( $rootMounted ) {
-      $fsScanSkipped = "A running container bind-mounts an entire appdata root, so every folder is in use. The filesystem scan is disabled to avoid offering in-use folders.";
+      $fsScanSkipped = "A container (running or stopped) bind-mounts an entire appdata root, so every folder is in use. The filesystem scan is disabled to avoid offering in-use folders.";
     } else {
       $coveredSegs = $templateSegs;
       foreach ( $inUse as $u => $unused ) { $s = appdataCleanupNgOwnerSegment($u); if ( $s !== "" ) $coveredSegs[$s] = true; }
@@ -188,7 +188,7 @@ case 'getOrphanAppdata':
     $zfs = appdataCleanupNgResolveZfsDataset($volume['HostDir']);
     $badges = "";
     if ( $zfs !== "" ) $badges .= "<span class='acng-zfs' title='ZFS dataset: ".htmlspecialchars($zfs,ENT_QUOTES)."'>ZFS</span>";
-    if ( $mounted ) $badges .= "<span class='acng-notpl' title='A running container bind-mounts a parent of this folder - it may still be in use'>in use by mount</span>";
+    if ( $mounted ) $badges .= "<span class='acng-notpl' title='A container (running or stopped) bind-mounts a parent of this folder - it may still be in use'>in use by mount</span>";
     if ( $noTemplate ) $badges .= "<span class='acng-notpl' title='No saved template references this folder'>no template</span>";
     $h = htmlspecialchars($volume['HostDir'],ENT_QUOTES);
     $zfsAttr = $zfs !== "" ? " data-zfs='1'" : "";
