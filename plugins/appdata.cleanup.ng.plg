@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "appdata.cleanup.ng">
 <!ENTITY author    "chodeus">
-<!ENTITY version   "2026.07.02">
-<!ENTITY md5       "49051c9a36fdabaaf054ea6201d28945">
+<!ENTITY version   "2026.07.09">
+<!ENTITY md5       "4cccb8e5ba9fe6e0fdf5568952a39ee8">
 <!ENTITY launch    "Settings/CleanUpAppdata">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "chodeus/appdata.cleanup.ng">
