@@ -198,8 +198,9 @@ case 'getOrphanAppdata':
            . "<span class='acng-tiphead'>A container (running or stopped) bind-mounts a parent of this folder &mdash; it may still be in use.</span>";
       foreach ($mountedBy as $n => $paths) {
         sort($paths);
-        $tip .= "<span class='acng-tiprow'><span class='acng-tipname'>".htmlspecialchars($n,ENT_QUOTES)."</span>"
-              . "<span class='acng-tippaths'>".htmlspecialchars(implode(", ",$paths),ENT_QUOTES)."</span></span>";
+        # ENT_SUBSTITUTE: an invalid-UTF-8 byte in a path must not blank the whole line (bare flags return "")
+        $tip .= "<span class='acng-tiprow'><span class='acng-tipname'>".htmlspecialchars((string)$n,ENT_QUOTES|ENT_SUBSTITUTE)."</span>"
+              . "<span class='acng-tippaths'>".htmlspecialchars(implode(", ",$paths),ENT_QUOTES|ENT_SUBSTITUTE)."</span></span>";
       }
       $tip .= "</span>";
       $badges .= "<span class='acng-notpl acng-hastip' tabindex='0'>in use by mount".$tip."</span>";

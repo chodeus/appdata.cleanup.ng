@@ -90,6 +90,9 @@ $(function() {
 	$(document).on("change",".appdata",function(){ updateDeleteButton(); updateSelectAllLabel(); });
 	$(document).on("mouseenter focusin",".acng-hastip",function(){ acngShowTip(this); });
 	$(document).on("mouseleave focusout",".acng-hastip",function(){ acngHideTip(); });
+	// the badge sits inside the row label: reading the tooltip must not toggle the delete checkbox
+	$(document).on("click",".acng-hastip",function(e){ e.preventDefault(); });
+	$(window).on("scroll resize",acngHideTip);
 	if ( "<?=$dockerRunning?>" == "false" ) {
 		swal({
 			title: "<?tr("Docker Not Running")?>",
