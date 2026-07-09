@@ -18,7 +18,7 @@
 ###2026.07.09
 - "In use by mount" badge now shows which containers reach the folder and via which mounts
 - Readable hover tooltip (one block per container) replaces the browser-default tooltip
-- Tooltip works with keyboard focus, closes on Escape, and stays out of screen-reader row labels
+- Tooltip can be opened with Tab and closed with Escape; clicking the badge no longer ticks the folder's checkbox
 - In-use messages clarified: stopped containers count too
 
 ###2026.07.02
