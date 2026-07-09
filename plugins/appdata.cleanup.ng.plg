@@ -15,6 +15,11 @@
 <CHANGES>
 ###ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING
 
+###2026.07.09
+- "In use by mount" badge now shows which containers reach the folder and via which mounts
+- Readable hover tooltip (one block per container) replaces the browser-default tooltip
+- In-use messages clarified: stopped containers count too
+
 ###2026.07.02
 - ZFS: destroy re-checks the resolved target is inside appdata
 - Delete refuses when Docker is stopped or unreachable

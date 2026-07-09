@@ -48,6 +48,13 @@ function tr($string,$ret=false) {
 .acng-empty { padding:14px; opacity:.7; }
 .acng-zfs { display:inline-block; margin-left:8px; padding:0 6px; font-size:.7em; font-weight:600; color:#fff; background:#7e57c2; border-radius:3px; vertical-align:middle; }
 .acng-notpl { display:inline-block; margin-left:8px; padding:0 6px; font-size:.7em; font-weight:600; color:#fff; background:#e67e00; border-radius:3px; vertical-align:middle; }
+.acng-hastip { cursor:help; }
+.acng-tipbox { display:none; }
+#acng-tip { position:fixed; z-index:1000; max-width:480px; padding:9px 12px; background:#1c1c1c; color:#eee; border:1px solid rgba(255,255,255,.15); border-radius:6px; box-shadow:0 4px 14px rgba(0,0,0,.45); font-size:13px; font-weight:400; line-height:1.45; text-align:left; pointer-events:none; }
+#acng-tip .acng-tiphead { display:block; opacity:.85; margin-bottom:7px; }
+#acng-tip .acng-tiprow { display:block; margin-top:4px; }
+#acng-tip .acng-tipname { display:block; font-weight:700; }
+#acng-tip .acng-tippaths { display:block; font-family:monospace; font-size:.92em; opacity:.75; word-break:break-all; }
 .acng-ignored { margin:12px 0; padding:8px 12px; border:1px dashed rgba(128,128,128,.3); border-radius:6px; }
 .acng-sub { font-weight:600; font-size:.85em; opacity:.7; margin-bottom:6px; }
 .acng-irow { display:flex; align-items:center; padding:3px 0; }
@@ -81,6 +88,8 @@ $(function() {
 		addBannerWarning("<?tr("The author takes no responsibility if you blindly accept the folders offered to delete")?>",false,true);
 	}
 	$(document).on("change",".appdata",function(){ updateDeleteButton(); updateSelectAllLabel(); });
+	$(document).on("mouseenter focusin",".acng-hastip",function(){ acngShowTip(this); });
+	$(document).on("mouseleave focusout",".acng-hastip",function(){ acngHideTip(); });
 	if ( "<?=$dockerRunning?>" == "false" ) {
 		swal({
 			title: "<?tr("Docker Not Running")?>",
@@ -90,6 +99,22 @@ $(function() {
 	}
 	loadAppdata();
 });
+
+function acngShowTip(el) {
+	var box = $(el).children(".acng-tipbox");
+	if ( ! box.length ) return;
+	acngHideTip();
+	var tip = $("<div id='acng-tip'></div>").html(box.html()).appendTo("body");
+	var r = el.getBoundingClientRect();
+	var top = r.bottom + 8;
+	var left = Math.max(8, Math.min(r.left, $(window).width() - tip.outerWidth() - 8));
+	if ( top + tip.outerHeight() > $(window).height() - 8 ) top = Math.max(8, r.top - tip.outerHeight() - 8);
+	tip.css({top: top + "px", left: left + "px"});
+}
+
+function acngHideTip() {
+	$("#acng-tip").remove();
+}
 
 function updateDeleteButton() {
 	$("#deleteButton").prop("disabled", $(".appdata:checked").length === 0);
@@ -165,6 +190,7 @@ function myAlert(description,textdescription,textimage,imagesize, outsideClick, 
 function loadAppdata() {
 	$("#settings").html("<img src='/plugins/appdata.cleanup.ng/images/spinner2.gif' width='48px'> <?tr("Finding orphaned appdata")?>");
 	$.post(caURL,{action:'getOrphanAppdata',fsscan:($('#fsScan').is(':checked')?'yes':'no'),stale:($('#staleScan').is(':checked')?'yes':'no'),csrf_token:csrf_token},function(data) {
+		acngHideTip();
 		$("#settings").html(data || "");
 		$("#selectAll").prop("disabled", $('.appdata').length === 0);
 		updateDeleteButton();

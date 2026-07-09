@@ -65,12 +65,16 @@ case 'getOrphanAppdata':
 
   # canonical form so cache/user and trailing-slash differences compare reliably
   $inUse = array();
+  $inUseBy = array();   # canonical host path -> [container, mount as configured] pairs, so badges can say who mounts it
   foreach ($info as $installedDocker) {
     if ( ! is_array($installedDocker['Volumes']) ) continue;
     foreach ($installedDocker['Volumes'] as $volume) {
       $host = explode(":",$volume);
       $c = appdataCleanupNgCanon($host[0]);
-      if ( $c !== "" && $c !== "/" ) $inUse[$c] = true;
+      if ( $c !== "" && $c !== "/" ) {
+        $inUse[$c] = true;
+        $inUseBy[$c][] = array((string)$installedDocker['Name'],$host[0]);
+      }
     }
   }
 
@@ -183,12 +187,23 @@ case 'getOrphanAppdata':
     count($all_files), count($info), count($composeProtected), count($availableVolumes),
     is_dir("/var/lib/docker/tmp") ? "" : " [docker service not running]"));
 
-  $renderRow = function($volume,$noTemplate=false,$mounted=false) {
+  $renderRow = function($volume,$noTemplate=false,$mountedBy=array()) {
     $sizeLabel = appdataCleanupNgFormatBytes(appdataCleanupNgFolderSizeBytes($volume['HostDir']));
     $zfs = appdataCleanupNgResolveZfsDataset($volume['HostDir']);
     $badges = "";
     if ( $zfs !== "" ) $badges .= "<span class='acng-zfs' title='ZFS dataset: ".htmlspecialchars($zfs,ENT_QUOTES)."'>ZFS</span>";
-    if ( $mounted ) $badges .= "<span class='acng-notpl' title='A container (running or stopped) bind-mounts a parent of this folder - it may still be in use'>in use by mount</span>";
+    if ( ! empty($mountedBy) ) {
+      # structured tooltip content; hidden by CSS, shown as a floating tip by the page JS (native title can't be styled)
+      $tip = "<span class='acng-tipbox'>"
+           . "<span class='acng-tiphead'>A container (running or stopped) bind-mounts a parent of this folder &mdash; it may still be in use.</span>";
+      foreach ($mountedBy as $n => $paths) {
+        sort($paths);
+        $tip .= "<span class='acng-tiprow'><span class='acng-tipname'>".htmlspecialchars($n,ENT_QUOTES)."</span>"
+              . "<span class='acng-tippaths'>".htmlspecialchars(implode(", ",$paths),ENT_QUOTES)."</span></span>";
+      }
+      $tip .= "</span>";
+      $badges .= "<span class='acng-notpl acng-hastip' tabindex='0'>in use by mount".$tip."</span>";
+    }
     if ( $noTemplate ) $badges .= "<span class='acng-notpl' title='No saved template references this folder'>no template</span>";
     $h = htmlspecialchars($volume['HostDir'],ENT_QUOTES);
     $zfsAttr = $zfs !== "" ? " data-zfs='1'" : "";
@@ -212,12 +227,17 @@ case 'getOrphanAppdata':
     echo "<div class='acng-list'>";
     foreach ($availableVolumes as $volume) {
       # badge (don't hide) a real orphan that also sits under a broad in-use bind mount, so the user is warned it may be live
-      $mounted = false;
+      $mountedBy = array();   # container name -> parent mounts that reach this folder
       $cand = appdataCleanupNgCanon($volume['HostDir']);
       foreach ($inUse as $u => $unused) {
-        if ( $u !== $cand && strpos($cand."/",$u."/") === 0 ) { $mounted = true; break; }
+        if ( $u !== $cand && strpos($cand."/",$u."/") === 0 && isset($inUseBy[$u]) ) {
+          foreach ($inUseBy[$u] as $m) {
+            if ( ! isset($mountedBy[$m[0]]) || ! in_array($m[1],$mountedBy[$m[0]],true) ) $mountedBy[$m[0]][] = $m[1];
+          }
+        }
       }
-      echo $renderRow($volume,false,$mounted);
+      ksort($mountedBy);
+      echo $renderRow($volume,false,$mountedBy);
     }
     if ( ! empty($fsOrphans) ) {
       echo "<div class='acng-section'>&#9888; No saved template &mdash; found by filesystem scan. Verify carefully before deleting.</div>";
