@@ -89,9 +89,10 @@ $(function() {
 	}
 	$(document).on("change",".appdata",function(){ updateDeleteButton(); updateSelectAllLabel(); });
 	$(document).on("mouseenter focusin",".acng-hastip",function(){ acngShowTip(this); });
-	$(document).on("mouseleave focusout",".acng-hastip",function(){ acngHideTip(); });
+	$(document).on("mouseleave focusout",".acng-hastip",function(){ acngMaybeHideTip(); });
 	// the badge sits inside the row label: reading the tooltip must not toggle the delete checkbox
 	$(document).on("click",".acng-hastip",function(e){ e.preventDefault(); });
+	$(document).on("keydown",function(e){ if ( e.key === "Escape" ) acngHideTip(); });
 	$(window).on("scroll resize",acngHideTip);
 	if ( "<?=$dockerRunning?>" == "false" ) {
 		swal({
@@ -103,10 +104,13 @@ $(function() {
 	loadAppdata();
 });
 
+var acngTipAnchor = null;
+
 function acngShowTip(el) {
 	var box = $(el).children(".acng-tipbox");
 	if ( ! box.length ) return;
 	acngHideTip();
+	acngTipAnchor = el;
 	var tip = $("<div id='acng-tip'></div>").html(box.html()).appendTo("body");
 	var r = el.getBoundingClientRect();
 	var top = r.bottom + 8;
@@ -116,7 +120,17 @@ function acngShowTip(el) {
 }
 
 function acngHideTip() {
+	acngTipAnchor = null;
 	$("#acng-tip").remove();
+}
+
+// a mouse pass-over must not kill a tip the keyboard focus owns; if another badge stole the tip, give it back to the focused one
+function acngMaybeHideTip() {
+	if ( ! acngTipAnchor ) return;
+	if ( acngTipAnchor === document.activeElement || ( acngTipAnchor.matches && acngTipAnchor.matches(":hover") ) ) return;
+	acngHideTip();
+	var f = document.activeElement;
+	if ( f && f.classList && f.classList.contains("acng-hastip") ) acngShowTip(f);
 }
 
 function updateDeleteButton() {

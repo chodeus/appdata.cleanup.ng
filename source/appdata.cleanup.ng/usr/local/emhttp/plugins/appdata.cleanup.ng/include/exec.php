@@ -64,24 +64,21 @@ case 'getOrphanAppdata':
 	}
 
   # canonical form so cache/user and trailing-slash differences compare reliably
-  $inUse = array();
-  $inUseBy = array();   # canonical host path -> [container, mount as configured] pairs, so badges can say who mounts it
+  # canonical host path -> container name -> raw mounts as configured (keys-as-set); the key set IS the in-use set
+  $inUseBy = array();
   foreach ($info as $installedDocker) {
     if ( ! is_array($installedDocker['Volumes']) ) continue;
     foreach ($installedDocker['Volumes'] as $volume) {
       $host = explode(":",$volume);
       $c = appdataCleanupNgCanon($host[0]);
-      if ( $c !== "" && $c !== "/" ) {
-        $inUse[$c] = true;
-        $inUseBy[$c][] = array((string)$installedDocker['Name'],$host[0]);
-      }
+      if ( $c !== "" && $c !== "/" ) $inUseBy[$c][(string)$installedDocker['Name']][$host[0]] = true;
     }
   }
 
   # match folder-itself or anything inside it, but a broad parent mount (e.g. a backup tool mounting all of /mnt/user/appdata) must NOT exclude every candidate
   foreach ($availableVolumes as $key => $volume) {
     $cand = appdataCleanupNgCanon($volume['HostDir']);
-    foreach ($inUse as $u => $unused) {
+    foreach ($inUseBy as $u => $unused) {
       if ( $cand === $u || strpos($u."/",$cand."/") === 0 ) {
         unset($availableVolumes[$key]);
         break;
@@ -162,7 +159,7 @@ case 'getOrphanAppdata':
     $rootMounted = false;
     foreach ( appdataCleanupNgAppdataRoots() as $r ) {
       $rc = appdataCleanupNgCanon($r);
-      foreach ( $inUse as $u => $unused ) {
+      foreach ( $inUseBy as $u => $unused ) {
         if ( $u === $rc || strpos($rc."/",$u."/") === 0 ) { $rootMounted = true; break 2; }
       }
     }
@@ -172,7 +169,7 @@ case 'getOrphanAppdata':
       $fsScanSkipped = "A container (running or stopped) bind-mounts an entire appdata root, so every folder is in use. The filesystem scan is disabled to avoid offering in-use folders.";
     } else {
       $coveredSegs = $templateSegs;
-      foreach ( $inUse as $u => $unused ) { $s = appdataCleanupNgOwnerSegment($u); if ( $s !== "" ) $coveredSegs[$s] = true; }
+      foreach ( $inUseBy as $u => $unused ) { $s = appdataCleanupNgOwnerSegment($u); if ( $s !== "" ) $coveredSegs[$s] = true; }
       foreach ( $composeProtected as $p ) { $s = appdataCleanupNgOwnerSegment($p); if ( $s !== "" ) $coveredSegs[$s] = true; }
       $fsOrphans = appdataCleanupNgFilesystemOrphans($coveredSegs);
       foreach ( $fsOrphans as $key => $volume ) {
@@ -193,11 +190,13 @@ case 'getOrphanAppdata':
     $badges = "";
     if ( $zfs !== "" ) $badges .= "<span class='acng-zfs' title='ZFS dataset: ".htmlspecialchars($zfs,ENT_QUOTES)."'>ZFS</span>";
     if ( ! empty($mountedBy) ) {
-      # structured tooltip content; hidden by CSS, shown as a floating tip by the page JS (native title can't be styled)
-      $tip = "<span class='acng-tipbox'>"
+      ksort($mountedBy,SORT_STRING);   # SORT_STRING: all-numeric container names become int keys, keep alphabetical intent
+      # structured tooltip content; hidden ([hidden] + CSS, aria-hidden so it can't join the checkbox label), shown as a floating tip by the page JS (native title can't be styled)
+      $tip = "<span class='acng-tipbox' hidden aria-hidden='true'>"
            . "<span class='acng-tiphead'>A container (running or stopped) bind-mounts a parent of this folder &mdash; it may still be in use.</span>";
       foreach ($mountedBy as $n => $paths) {
-        sort($paths);
+        $paths = array_keys($paths);
+        sort($paths,SORT_STRING);
         # ENT_SUBSTITUTE: an invalid-UTF-8 byte in a path must not blank the whole line (bare flags return "")
         $tip .= "<span class='acng-tiprow'><span class='acng-tipname'>".htmlspecialchars((string)$n,ENT_QUOTES|ENT_SUBSTITUTE)."</span>"
               . "<span class='acng-tippaths'>".htmlspecialchars(implode(", ",$paths),ENT_QUOTES|ENT_SUBSTITUTE)."</span></span>";
@@ -228,16 +227,13 @@ case 'getOrphanAppdata':
     echo "<div class='acng-list'>";
     foreach ($availableVolumes as $volume) {
       # badge (don't hide) a real orphan that also sits under a broad in-use bind mount, so the user is warned it may be live
-      $mountedBy = array();   # container name -> parent mounts that reach this folder
+      $mountedBy = array();   # container name -> parent-mount set that reaches this folder
       $cand = appdataCleanupNgCanon($volume['HostDir']);
-      foreach ($inUse as $u => $unused) {
-        if ( $u !== $cand && strpos($cand."/",$u."/") === 0 && isset($inUseBy[$u]) ) {
-          foreach ($inUseBy[$u] as $m) {
-            if ( ! isset($mountedBy[$m[0]]) || ! in_array($m[1],$mountedBy[$m[0]],true) ) $mountedBy[$m[0]][] = $m[1];
-          }
+      foreach ($inUseBy as $u => $containers) {
+        if ( $u !== $cand && strpos($cand."/",$u."/") === 0 ) {
+          foreach ($containers as $n => $paths) $mountedBy[$n] = isset($mountedBy[$n]) ? $mountedBy[$n] + $paths : $paths;
         }
       }
-      ksort($mountedBy);
       echo $renderRow($volume,false,$mountedBy);
     }
     if ( ! empty($fsOrphans) ) {
