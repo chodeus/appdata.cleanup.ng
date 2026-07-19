@@ -46,7 +46,7 @@ reviews:
       instructions: |
         The emhttp page — PHP + HTML + inline jQuery (the only frontend). JS-specific rules:
         - Delete must stay behind the explicit confirm dialog; the delete button defaults disabled and arms only on a real selection. Any change that fires a delete POST without confirmation is a blocker.
-        - 0 and "" are falsy in JS: use Number.isFinite / explicit length or null checks — NOT `||` / bare truthiness — where 0 (selected count, zfsCount) or "" (a path string) is a legitimate value.
+        - 0 is falsy in JS: for counters where 0 is legitimate (selected count, zfsCount) use Number.isFinite / explicit `=== 0` / `.length` checks, not `||` / bare truthiness. But a candidate deletion path is NOT legitimately empty — reject a blank/"" path (the server already does: `$path === ""` → skip); don't treat "" as a value to preserve.
         - Every mutating $.post (deleteAppdata, deleteTemplates, ignorePath) must include csrf_token; never drop it.
         - HTML-escape server/path values before interpolating them into the confirm dialog or DOM (paths are attacker-influenced folder names).
         - Never put a long-lived token in a URL (img src / EventSource / webhook); keep mutations as CSRF-protected POSTs.
