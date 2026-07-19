@@ -21,8 +21,9 @@ reviews:
         Action router that performs the actual deletes: deleteAppdata (rm -rf branch + zfs destroy branch) and deleteTemplates (unlink). Highest-stakes file — treat findings here as blocking until disproven.
         - FAIL CLOSED on unknowable state: deleteAppdata/deleteTemplates must REFUSE when the live docker/container set can't be read (service down or engine unreachable). An empty container / in-use / stale set caused by a failed read must DENY the delete, never fall through to "delete everything". Flag any path where an empty keep/in-use/stale set leads to deletion.
         - GUARD THE DESTRUCTIVE OP: disk deletion must stay behind explicit user confirmation; the zfs destroy branch must require the explicit zfs-enabled flag (never zfs-destroy by default).
-        - RE-CONFINE THE RESOLVED TARGET: before exec("rm -rf ...") or zfs destroy, realpath() the target and re-assert it is inside an appdata root AND not a mount boundary. The submitted-string guards (within-appdata, ../, mount-point) are defeated by a symlinked path component — rm/destroy exactly the validated realpath, not the raw POST value.
-        - DIFF THE SIBLING BRANCHES: the rm -rf branch and the zfs destroy branch must carry the SAME guards (realpath re-confine, mount-boundary refuse, outside-appdata refuse, gating flag). A guard present on one branch and missing on its sibling is the bug — call it out explicitly.
+        - RE-CONFINE THE RESOLVED TARGET: both delete branches must realpath() the target and re-assert it is inside an appdata root before acting — a symlinked path component defeats the submitted-string checks, so act on the validated realpath, not the raw POST value.
+        - MOUNT-BOUNDARY REFUSAL IS rm-BRANCH ONLY: a recognized ZFS dataset IS a mountpoint and must be `zfs destroy`d — never rm -rf'd and never mount-refused. The dataset case is resolved first and short-circuits (continue) BEFORE the mount-point check, so the isMountPoint refusal only fires on the rm -rf branch, to reject a mountpoint that is NOT a known dataset. Flag a change that ADDS an isMountPoint/non-dataset gate to the zfs branch (rejects every valid destroy) or REMOVES the mount-point refusal from the rm branch (rm -rf across a mount).
+        - DIFF THE SIBLING BRANCHES: the two branches must share the guards that genuinely apply to both — within-appdata confinement, realpath re-confinement, and (zfs branch) the zfs-enabled gating flag. A shared guard present on one branch and missing on its sibling is the bug — but the mount-boundary refusal is rm-only by design (above), not a shared guard.
         - zfs destroy must escalate to -r (recursive; destroys snapshots/children irreversibly) ONLY when the dry-run shows genuine dependents (child/snapshot/clone/dependent); any other dry-run failure (busy/permission/pool) must NOT trigger -r.
         - Never pass a raw/unsanitized request path to exec/rm/zfs — always escapeshellarg the validated realpath. No shelling out with attacker-controlled path strings.
     - path: "source/**/include/helpers.php"
@@ -59,9 +60,7 @@ reviews:
     # secret scanning everywhere (caCredits/config surfaces)
     gitleaks:
       enabled: true
-    # pattern-based PHP security (command injection, path traversal) — no symbol resolution, so no emhttp undefined-symbol noise
-    semgrep:
-      enabled: true
+    # semgrep OFF: CodeRabbit only runs Semgrep when the repo has a committed Semgrep config, and it does not ship community rules — enabling it without a semgrep.yaml is inert (a registry ref like p/php won't work either). Add a committed PHP ruleset later if SAST is wanted.
     # off: emhttp has no autoloader/stubs, so phpstan floods every PR with false "undefined DockerClient/getPost/my_parse_ini_file" — buries the real delete-path findings. Re-enable with a phpstan.neon + Unraid stubs + baseline.
     phpstan:
       enabled: false
