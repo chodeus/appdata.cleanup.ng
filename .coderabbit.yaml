@@ -1,0 +1,70 @@
+# .coderabbit.yaml — appdata.cleanup.ng (Unraid plugin; DESTRUCTIVE bulk appdata deletion — highest data-loss stakes)
+language: "en-US"
+reviews:
+  # assertive: the one repo where a missed guard = irreversible data loss (rm -rf / zfs destroy). Nitpick the delete paths.
+  profile: "assertive"
+  # off: solo maintainer merges own PRs — assertive comments surface the risk without a blocking review gate.
+  request_changes_workflow: false
+  auto_review:
+    enabled: true
+    drafts: false
+  # main is the default (and only) branch — always auto-reviewed; no base_branches needed.
+  path_filters:
+    - "!archive/**"      # built .txz release packages
+    - "!screenshot/**"   # PNG screenshots
+    - "!**/*.txz"        # plugin packages
+    - "!**/*.png"        # bundled icons / screenshots
+    - "!**/*.gif"        # spinner asset
+  path_instructions:
+    - path: "source/**/include/exec.php"
+      instructions: |
+        Action router that performs the actual deletes: deleteAppdata (rm -rf branch + zfs destroy branch) and deleteTemplates (unlink). Highest-stakes file — treat findings here as blocking until disproven.
+        - FAIL CLOSED on unknowable state: deleteAppdata/deleteTemplates must REFUSE when the live docker/container set can't be read (service down or engine unreachable). An empty container / in-use / stale set caused by a failed read must DENY the delete, never fall through to "delete everything". Flag any path where an empty keep/in-use/stale set leads to deletion.
+        - GUARD THE DESTRUCTIVE OP: disk deletion must stay behind explicit user confirmation; the zfs destroy branch must require the explicit zfs-enabled flag (never zfs-destroy by default).
+        - RE-CONFINE THE RESOLVED TARGET: before exec("rm -rf ...") or zfs destroy, realpath() the target and re-assert it is inside an appdata root AND not a mount boundary. The submitted-string guards (within-appdata, ../, mount-point) are defeated by a symlinked path component — rm/destroy exactly the validated realpath, not the raw POST value.
+        - DIFF THE SIBLING BRANCHES: the rm -rf branch and the zfs destroy branch must carry the SAME guards (realpath re-confine, mount-boundary refuse, outside-appdata refuse, gating flag). A guard present on one branch and missing on its sibling is the bug — call it out explicitly.
+        - zfs destroy must escalate to -r (recursive; destroys snapshots/children irreversibly) ONLY when the dry-run shows genuine dependents (child/snapshot/clone/dependent); any other dry-run failure (busy/permission/pool) must NOT trigger -r.
+        - Never pass a raw/unsanitized request path to exec/rm/zfs — always escapeshellarg the validated realpath. No shelling out with attacker-controlled path strings.
+    - path: "source/**/include/helpers.php"
+      instructions: |
+        Confinement + filesystem primitives (appdata roots, path-within-appdata, canonicalization, mount-point test, zfs destroy, template unlink, diagnostics).
+        - NORMALIZED-PATH CHECKS ONLY: allowlist/traversal checks must run on the canonicalized path (collapse duplicate slashes, reject ../, reject control chars/newlines before normalization) — a check against the raw string is bypassable by ../ collapse.
+        - CONFINEMENT-ROOT SAFETY FLOOR: a delete root must be at least /mnt/<pool>/<share>; never "/", "/mnt", or a bare pool root. A misconfigured or empty DOCKER_APP_CONFIG_PATH must fail closed to a safe default, never widen the delete root to a whole share tree or "/".
+        - FAIL CLOSED ON VERIFY FAILURE: any guard that can't verify a boundary (mount-point stat fails, zfs list fails, config parse fails) must return the DENY answer (treat-as-mount / refuse), never allow. Flag any guard that returns allow/true on a stat/exec/parse failure.
+        - Template unlink must realpath the target and confirm it is inside the template dir before unlink — never unlink a path that resolves outside it.
+        - Don't cache a transient exec failure (zfs/docker/du/5xx/timeout) as a definitive negative that suppresses a valid result or greenlights a delete.
+        - Diagnostics bundle / any read path that echoes config or logs must redact secrets structurally (mask sensitive leaf names), not just on one endpoint.
+    - path: "source/**/*.php"
+      instructions: |
+        emhttp plugin PHP (no Composer/autoloader; raw includes; Unraid runtime globals like DockerClient, getPost, my_parse_ini_file, addBannerWarning are provided at runtime — do NOT flag them as undefined).
+        - Validate and sanitize every $_POST/$_GET/getPost input before use; reject bad input before normalization, not after.
+        - No shelling out (exec/shell_exec/system/passthru) with an unsanitized path or user string — escapeshellarg validated values only.
+        - CSRF: every state-changing action must verify the Unraid csrf_token.
+        - Redact secrets on every read/export/diagnostics path, not just the primary config read; make redaction structural so a new secret field is covered automatically.
+    - path: "source/**/*.page"
+      instructions: |
+        The emhttp page — PHP + HTML + inline jQuery (the only frontend). JS-specific rules:
+        - Delete must stay behind the explicit confirm dialog; the delete button defaults disabled and arms only on a real selection. Any change that fires a delete POST without confirmation is a blocker.
+        - 0 and "" are falsy in JS: use Number.isFinite / explicit length or null checks — NOT `||` / bare truthiness — where 0 (selected count, zfsCount) or "" (a path string) is a legitimate value.
+        - Every mutating $.post (deleteAppdata, deleteTemplates, ignorePath) must include csrf_token; never drop it.
+        - HTML-escape server/path values before interpolating them into the confirm dialog or DOM (paths are attacker-influenced folder names).
+        - Never put a long-lived token in a URL (img src / EventSource / webhook); keep mutations as CSRF-protected POSTs.
+    - path: "plugins/*.plg"
+      instructions: |
+        Unraid plugin manifest — the <FILE Run> install and Method="remove" scripts execute as ROOT on the host.
+        - Any rm/rmdir/removepkg in install/remove scripts must target a FIXED plugin path (/usr/local/emhttp/plugins/<name>, /boot/config/plugins/<name>) — never an interpolated or unvalidated variable, and never a path that could delete outside those two trees.
+        - Scrutinize shell substitutions like `rm -f $(ls ...&name;*.txz | grep -v &version;)`: confirm the glob cannot match and delete unintended files when version/name is empty or malformed.
+        - Downloads must stay pinned and MD5-verified (CI checks package MD5 against the manifest) — don't loosen the pin or the checksum gate.
+  tools:
+    # secret scanning everywhere (caCredits/config surfaces)
+    gitleaks:
+      enabled: true
+    # pattern-based PHP security (command injection, path traversal) — no symbol resolution, so no emhttp undefined-symbol noise
+    semgrep:
+      enabled: true
+    # off: emhttp has no autoloader/stubs, so phpstan floods every PR with false "undefined DockerClient/getPost/my_parse_ini_file" — buries the real delete-path findings. Re-enable with a phpstan.neon + Unraid stubs + baseline.
+    phpstan:
+      enabled: false
+    # off: style-only noise on README files; not in scope for a data-loss review
+    markdownlint:
+      enabled: false
