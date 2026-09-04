@@ -5,6 +5,10 @@ reviews:
   profile: "assertive"
   # off: solo maintainer merges own PRs — assertive comments surface the risk without a blocking review gate.
   request_changes_workflow: false
+  pre_merge_checks:
+    # off: the 80% docstring-coverage warning contradicts the one-line-docstring rule under "**"
+    docstrings:
+      mode: "off"
   auto_review:
     enabled: true
     drafts: false
@@ -56,6 +60,46 @@ reviews:
         - Any rm/rmdir/removepkg in install/remove scripts must target a FIXED plugin path (/usr/local/emhttp/plugins/<name>, /boot/config/plugins/<name>) — never an interpolated or unvalidated variable, and never a path that could delete outside those two trees.
         - Scrutinize shell substitutions like `rm -f $(ls ...&name;*.txz | grep -v &version;)`: confirm the glob cannot match and delete unintended files when version/name is empty or malformed.
         - Downloads must stay pinned and MD5-verified (CI checks package MD5 against the manifest) — don't loosen the pin or the checksum gate.
+    - path: ".github/workflows/**"
+      instructions: |
+        CI and the release workflow (runs as github-actions[bot] with contents: write):
+        - ci.yml gates are php -l, xmllint on the .plg, and a rebuild whose md5
+          must equal the .plg's md5 entity. Flag any of them made non-blocking.
+        - release.yml deletes today's archive/*.txz before rebuilding so the
+          version is unsuffixed, then pushes to main and publishes a GitHub
+          release — the rm -f must stay scoped to the current-date pattern, and
+          the tag must stay v<version> derived from the .plg, not typed in.
+        - Enumerate allowed states positively (== 'success' || == 'skipped'),
+          never by negation; pin third-party actions by commit SHA; never
+          interpolate untrusted input into `run:`.
+    - path: "{pkg_build.sh,copy_to_git.sh,.githooks/**}"
+      instructions: |
+        Packaging, source-sync and pre-push scripts:
+        - pkg_build.sh's guards must stay: source dir and .plg exist, filecount
+          >= 5, package >= 1000 bytes, and the post-sed re-read that fails when
+          the .plg version or md5 differs from what was built.
+        - copy_to_git.sh has no set -e and its `find . -exec rm` of ._* files
+          runs from the CURRENT directory, not the destination — flag any
+          change that widens that or drops the -name "._*" filter.
+        - .githooks/pre-push must fail closed: a missing package or an md5 that
+          differs from the .plg is a rejection.
+    - path: "**"
+      instructions: |-
+        Applies to every file, whatever the language:
+        - Comments are navigational or instructional only and capped at 1-2 lines:
+          what a non-obvious block does, or the gotcha it guards. No why/history
+          essays, no before/after narrative, no restating the code, no section
+          banners. Docstrings: one line unless the signature genuinely cannot
+          carry it. Never ask for a docstring to be added; a missing docstring
+          is not a finding.
+        - The 1-2 line cap wins even inside an already heavily-commented file —
+          matching local density is not licence to exceed it.
+        - A comment, docstring, help text, column header, log message or UI label
+          that disagrees with what the code does is a correctness finding, not a
+          stale-comment nit: report it and say which side is wrong.
+        - Do not flag stylistic preferences that are consistent across the file
+          (naming, quoting, import order, formatting, line length). Report
+          correctness, security, data-loss and the classes named above.
   tools:
     # secret scanning everywhere (caCredits/config surfaces)
     gitleaks:
@@ -63,6 +107,11 @@ reviews:
     # semgrep OFF: CodeRabbit only runs Semgrep when the repo has a committed Semgrep config, and it does not ship community rules — enabling it without a semgrep.yaml is inert (a registry ref like p/php won't work either). Add a committed PHP ruleset later if SAST is wanted.
     # off: emhttp has no autoloader/stubs, so phpstan floods every PR with false "undefined DockerClient/getPost/my_parse_ini_file" — buries the real delete-path findings. Re-enable with a phpstan.neon + Unraid stubs + baseline.
     phpstan:
+      enabled: false
+    # off for the same reason: phpmd/phpcs default ON and post ruleset/PSR style noise on emhttp PHP (PHPMD did exactly that on the ca.mover.tuning audit)
+    phpmd:
+      enabled: false
+    phpcs:
       enabled: false
     # off: style-only noise on README files; not in scope for a data-loss review
     markdownlint:
