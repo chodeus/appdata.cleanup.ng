@@ -1,8 +1,7 @@
 name: Release
 
-# Release-PR model: every push to main refreshes the "chore(main): release" PR with seed
-# bullets in CHANGELOG.md; merging that PR cuts the release (version stamp, CHANGES render,
-# build, tag, GitHub release with the .txz attached). Needs the RELEASE_TOKEN secret.
+# Pushes touching plugin files refresh the "chore(main): release" PR; merging it cuts the release.
+# Needs the RELEASE_TOKEN secret. Mechanics: chodeus-ops unraid-plugin-release.yml.
 
 on:
   push:

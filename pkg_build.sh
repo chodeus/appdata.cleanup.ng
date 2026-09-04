@@ -25,8 +25,8 @@ tmpdir="$CWD/tmp/tmp.$((RANDOM % 1000000))"
 [ -d "$SRC" ] || { echo "ERROR: source dir not found: $SRC"; exit 1; }
 [ -f "$PLG" ] || { echo "ERROR: manifest not found: $PLG"; exit 1; }
 
-# Usage: pkg_build.sh [--version YYYY.MM.DD[.N]] [--branch main] [--out DIR]
-# The release workflow passes the version; a bare run stamps today's date for local testing.
+# Usage: pkg_build.sh --version YYYY.MM.DD[.N] [--branch main] [--out DIR]
+# The release workflow owns version numbering; local test builds pass any version explicitly.
 version=""
 branch="main"
 while [ $# -gt 0 ]; do
@@ -37,7 +37,7 @@ while [ $# -gt 0 ]; do
         *) echo "ERROR: unknown option '$1'"; exit 1 ;;
     esac
 done
-[ -n "$version" ] || version=$(date +"%Y.%m.%d")
+[ -n "$version" ] || { echo "ERROR: --version is required (e.g. --version 0000.00.00 for a test build)"; exit 1; }
 [ "$branch" = "main" ] || { echo "ERROR: this plugin only publishes from main (got '$branch')"; exit 1; }
 filename="$OUT/$PLUGIN-$version-x86_64-1.txz"
 
