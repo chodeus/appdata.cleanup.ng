@@ -62,27 +62,29 @@ reviews:
         - Downloads must stay pinned and MD5-verified (CI checks package MD5 against the manifest) — don't loosen the pin or the checksum gate.
     - path: ".github/workflows/**"
       instructions: |
-        CI and the release workflow (runs as github-actions[bot] with contents: write):
-        - ci.yml gates are php -l, xmllint on the .plg, and a rebuild whose md5
-          must equal the .plg's md5 entity. Flag any of them made non-blocking.
-        - release.yml deletes today's archive/*.txz before rebuilding so the
-          version is unsuffixed, then pushes to main and publishes a GitHub
-          release — the rm -f must stay scoped to the current-date pattern, and
-          the tag must stay v<version> derived from the .plg, not typed in.
+        CI and the release-PR automation:
+        - ci.yml gates are php -l, xmllint on the .plg, the plg_release.py check
+          (CHANGELOG.md must render to the committed CHANGES block, pluginURL
+          must name the branch, the manifest md5 must match the served package)
+          and a test build. Flag any of them made non-blocking.
+        - release.yml is a thin caller of chodeus-ops' unraid-plugin-release
+          reusable: it must keep passing RELEASE_TOKEN, keep the paths filter
+          (CHANGELOG.md included, or release-PR merges never trigger) and the
+          plg-release concurrency group.
         - Enumerate allowed states positively (== 'success' || == 'skipped'),
           never by negation; pin third-party actions by commit SHA; never
           interpolate untrusted input into `run:`.
-    - path: "{pkg_build.sh,copy_to_git.sh,.githooks/**}"
+    - path: "{pkg_build.sh,copy_to_git.sh}"
       instructions: |
-        Packaging, source-sync and pre-push scripts:
+        Packaging and source-sync scripts:
         - pkg_build.sh's guards must stay: source dir and .plg exist, filecount
           >= 5, package >= 1000 bytes, and the post-sed re-read that fails when
-          the .plg version or md5 differs from what was built.
+          the .plg version or md5 differs from what was built. The version
+          comes from --version (the release workflow owns numbering); never
+          reintroduce date or archive-glob versioning here.
         - copy_to_git.sh has no set -e and its `find . -exec rm` of ._* files
           runs from the CURRENT directory, not the destination — flag any
           change that widens that or drops the -name "._*" filter.
-        - .githooks/pre-push must fail closed: a missing package or an md5 that
-          differs from the .plg is a rejection.
     - path: "**"
       instructions: |-
         Applies to every file, whatever the language:

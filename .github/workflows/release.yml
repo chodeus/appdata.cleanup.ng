@@ -1,62 +1,43 @@
 name: Release
 
+# Release-PR model: every push to main refreshes the "chore(main): release" PR with seed
+# bullets in CHANGELOG.md; merging that PR cuts the release (version stamp, CHANGES render,
+# build, tag, GitHub release with the .txz attached). Needs the RELEASE_TOKEN secret.
+
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'source/**'
+      - 'pkg_build.sh'
+      - 'plugins/appdata.cleanup.ng.plg'
+      - 'CHANGELOG.md'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'auto = decide from the pushed commit; pr = refresh the release PR; release = cut a release from this branch'
+        type: choice
+        options: [auto, pr, release]
+        default: auto
+      dry_run:
+        description: 'Run everything except pushes, tags and the GitHub release'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: plg-release
+  cancel-in-progress: false
 
 jobs:
   release:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout main
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          ref: main
-          fetch-depth: 0
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      # Remove today's packages so pkg_build.sh uses a clean date version (no collision suffix)
-      - name: Clean today's packages
-        run: |
-          today=$(date +"%Y.%m.%d")
-          rm -f archive/appdata.cleanup.ng-${today}*-x86_64-1.txz
-
-      - name: Build package
-        run: |
-          chmod +x pkg_build.sh
-          ./pkg_build.sh
-
-      - name: Extract version
-        id: version
-        run: |
-          version=$(grep -oP '<!ENTITY version\s+"\K[^"]+' plugins/appdata.cleanup.ng.plg)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "file=appdata.cleanup.ng-${version}-x86_64-1.txz" >> "$GITHUB_OUTPUT"
-
-      - name: Commit release
-        run: |
-          git add -A
-          git commit -m "Release ${{ steps.version.outputs.version }}"
-          git push origin main
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
-        with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: v${{ steps.version.outputs.version }}
-          body: |
-            ## Appdata Cleanup NG v${{ steps.version.outputs.version }}
-
-            Install in Unraid (Plugins > Install Plugin):
-            `https://raw.githubusercontent.com/chodeus/appdata.cleanup.ng/main/plugins/appdata.cleanup.ng.plg`
-
-            See the manifest CHANGES for details.
-          files: archive/${{ steps.version.outputs.file }}
-          draft: false
-          prerelease: false
+    uses: chodeus/chodeus-ops/.github/workflows/unraid-plugin-release.yml@main
+    with:
+      plg_file: plugins/appdata.cleanup.ng.plg
+      stable_branch: main
+      mode: ${{ inputs.mode || 'auto' }}
+      dry_run: ${{ inputs.dry_run || false }}
+    secrets:
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}

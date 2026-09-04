@@ -48,6 +48,8 @@ Temporary Items
 
 # Build scratch + local dev (never shipped)
 tmp/
+dist/
+.ops/
 CLAUDE.md
 AGENTS.md
 .claude/
