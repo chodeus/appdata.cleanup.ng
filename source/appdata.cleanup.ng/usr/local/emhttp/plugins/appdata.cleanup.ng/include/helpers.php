@@ -520,16 +520,20 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
         || preg_match('#^[ \t]*source[ \t]*:[ \t]*["\']?[^\n]*\$[A-Za-z_{]#m',$contents) ) {
         $uncertain = true;
       }
-      # a bind host containing ".." never matches the root pattern below, so it would be
-      # silently unprotected; scoped to bind positions like the check above
-      if ( preg_match('#^[ \t]*-[ \t]*["\']?/[^\n:=]*(?:^|/)\.\.(?:/[^\n:]*)?:/#m',$contents)
-        || preg_match('#^[ \t]*source[ \t]*:[ \t]*["\']?/[^\n]*(?:/\.\.(?:/|$|["\'\s]))#m',$contents) ) {
-        $uncertain = true;
+      # A bind host we cannot trust never matches the root pattern below, so it would be
+      # silently unprotected. Check every bind host up front with the shared predicates.
+      if ( preg_match_all('#^[ \t]*(?:-|source[ \t]*:)[ \t]*["\']?(/[^\n:"\']*)#m',$contents,$hosts,PREG_SET_ORDER) ) {
+        foreach ( $hosts as $h ) {
+          $host = rtrim($h[1],"/");
+          if ( appdataCleanupNgHasControlChars($host) || preg_match('#(^|/)\.\.(/|$)#',$host) ) {
+            $uncertain = true;
+            break;
+          }
+        }
       }
       if ( preg_match_all($pattern,$contents,$matches,PREG_SET_ORDER) ) {
         foreach ( $matches as $hit ) {
-          # a bind we cannot resolve (traversal, control chars) would protect the wrong folder:
-          # "appdata/a/../b" yields "a" while the stack really uses "b". Fail closed instead.
+          # belt and braces: the pre-check above already marked such a file uncertain
           if ( appdataCleanupNgHasControlChars($hit[2]) || preg_match('#(^|/)\.\.(/|$)#',$hit[2]) ) {
             $uncertain = true;
             continue;

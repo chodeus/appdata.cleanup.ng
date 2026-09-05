@@ -2,7 +2,7 @@
 # Fails when a plugin function is called but never defined. php -l cannot see this, so a
 # rename that misses a call site would otherwise ship as a fatal on that code path.
 $root = $argv[1] ?? "source";
-$prefix = "appdataCleanupNg";
+$prefix = strtolower("appdataCleanupNg");
 $defined = $called = array();
 
 $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root));
@@ -25,7 +25,8 @@ foreach ($it as $file) {
         $isName = $t[0] === T_STRING
             || (defined('T_NAME_FULLY_QUALIFIED') && $t[0] === T_NAME_FULLY_QUALIFIED);
         if (!$isName) continue;
-        $name = ltrim($t[1], "\\");            // \appdataCleanupNgX is the same function
+        // PHP function names are case-insensitive; compare and key on a normalised form
+        $name = strtolower(ltrim($t[1], "\\"));
         if (strpos($name, $prefix) !== 0) continue;
         $prev = $n > 0 ? $tokens[$meaningful[$n - 1]] : null;
         $next = isset($meaningful[$n + 1]) ? $tokens[$meaningful[$n + 1]] : null;
