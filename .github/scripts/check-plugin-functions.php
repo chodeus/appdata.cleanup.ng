@@ -23,14 +23,20 @@ foreach ($it as $file) {
     $inClassAt = array(); $classDepths = array(); $depth = 0; $pendingClass = false;
     $classKeywords = array(T_CLASS, T_INTERFACE, T_TRAIT);
     if (defined('T_ENUM')) $classKeywords[] = T_ENUM;
+    $prevSig = null;
     foreach ($tokens as $i => $t) {
         // record membership as it stands AT this token; the set is mutated as scopes close
         $inClassAt[$i] = !empty($classDepths);
         if (is_array($t)) {
-            if (in_array($t[0], $classKeywords, true)) $pendingClass = true;
+            if (in_array($t[0], array(T_WHITESPACE, T_COMMENT, T_DOC_COMMENT), true)) continue;
+            // Foo::class is a constant, not a declaration
+            $afterDoubleColon = is_array($prevSig) && $prevSig[0] === T_DOUBLE_COLON;
+            if (in_array($t[0], $classKeywords, true) && !$afterDoubleColon) $pendingClass = true;
             elseif (in_array($t[0], array(T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES), true)) $depth++;
+            $prevSig = $t;
             continue;
         }
+        $prevSig = $t;
         if ($t === "{") {
             $depth++;
             if ($pendingClass) { $classDepths[$depth] = true; $pendingClass = false; }
@@ -52,6 +58,9 @@ foreach ($it as $file) {
         $prev = $n > 0 ? $tokens[$meaningful[$n - 1]] : null;
         $next = isset($meaningful[$n + 1]) ? $tokens[$meaningful[$n + 1]] : null;
 
+        // function &name() returns by reference; & is a literal before 8.1 and a token after,
+        // so match on its text rather than on the token id
+        if ((is_array($prev) ? $prev[1] : $prev) === "&" && $n > 1) $prev = $tokens[$meaningful[$n - 2]];
         if (is_array($prev) && $prev[0] === T_FUNCTION) {
             // only a top-level declaration defines a global function
             if (!$inClassAt[$i]) $defined[$name] = true;
