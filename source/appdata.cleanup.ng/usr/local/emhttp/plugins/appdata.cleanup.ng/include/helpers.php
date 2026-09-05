@@ -68,9 +68,9 @@ function dirContents($path) {
 # getDockerContainers() returns [] for both "no containers" and a failed list, so probe the
 # list endpoint itself: an empty in-use set is only trustworthy when the request succeeded.
 function appdataCleanupNgContainerListTrustworthy($dc) {
-  if ( ! is_object($dc) || ! method_exists($dc,"getDockerJSON") ) return true;
-  # getDockerJSON sets its by-ref flag to true on success and to an error STRING on failure,
-  # so this must be a strict comparison: a truthy test would accept the error case.
+  # unverifiable means untrusted: an empty list would otherwise look like "no containers"
+  if ( ! is_object($dc) || ! method_exists($dc,"getDockerJSON") ) return false;
+  # the by-ref flag is true on success and an error STRING on failure, so compare strictly
   $ok = null; $list = @$dc->getDockerJSON("/containers/json?all=1","GET",$ok);
   return ( $ok === true && is_array($list) );
 }
@@ -110,7 +110,7 @@ function appdataCleanupNgHasControlChars($s) {
 }
 
 function appdataCleanupNgIsConfigTarget($target) {
-  # reject control characters and traversal on the raw value, then allow only /config[/...]
+  # allowlist /config[/...] after rejecting control characters and traversal on the raw value
   $raw = (string)$target;
   if ( appdataCleanupNgHasControlChars($raw) || preg_match('#(^|/)\.\.?(/|$)#',$raw) ) return false;
   $t = rtrim(trim($raw),"/");
@@ -476,9 +476,8 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
   $roots = appdataCleanupNgAppdataRoots();
   if ( empty($roots) ) return array();
 
-  # A bind may be written with redundant separators ("/mnt/user//appdata/x") or "." segments
-  # ("/mnt/user/./appdata/x"). Matching the root literally would miss those and, worse, leave
-  # uncertain false, so the folder would look unprotected. Tolerate them in the separator.
+  # tolerate redundant separators and "." segments in a bind path; a literal root match would
+  # miss them and leave the folder silently unprotected
   $sep = "/+(?:\\./+)*";
   $escaped = array();
   foreach ( $roots as $r ) {
