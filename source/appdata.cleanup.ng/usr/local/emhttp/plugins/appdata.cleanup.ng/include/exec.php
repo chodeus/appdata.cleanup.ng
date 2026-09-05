@@ -84,7 +84,7 @@ case 'getOrphanAppdata':
   foreach ($availableVolumes as $key => $volume) {
     $cand = appdataCleanupNgCanon($volume['HostDir']);
     foreach ($inUseBy as $u => $unused) {
-      if ( $cand === $u || strpos($u."/",$cand."/") === 0 ) {
+      if ( appdataCleanupNgPathUnder($u,$cand) ) {
         unset($availableVolumes[$key]);
         break;
       }
@@ -138,7 +138,7 @@ case 'getOrphanAppdata':
   if ( ! empty($composeProtected) ) {
     $composeSet = array_flip($composeProtected);
     foreach ( $availableVolumes as $key => $volume ) {
-      if ( isset($composeSet[appdataCleanupNgCanon($volume['HostDir'])]) ) {
+      if ( appdataCleanupNgCoveredBy(appdataCleanupNgCanon($volume['HostDir']),$composeSet) ) {
         unset($availableVolumes[$key]);
       }
     }
@@ -163,7 +163,7 @@ case 'getOrphanAppdata':
     foreach ( appdataCleanupNgAppdataRoots() as $r ) {
       $rc = appdataCleanupNgCanon($r);
       foreach ( $inUseBy as $u => $unused ) {
-        if ( $u === $rc || strpos($rc."/",$u."/") === 0 ) { $rootMounted = true; break 2; }
+        if ( appdataCleanupNgPathUnder($rc,$u) ) { $rootMounted = true; break 2; }
       }
     }
     if ( $composeUncertain ) {
@@ -233,7 +233,7 @@ case 'getOrphanAppdata':
       $mountedBy = array();   # container name -> parent-mount set that reaches this folder
       $cand = appdataCleanupNgCanon($volume['HostDir']);
       foreach ($inUseBy as $u => $containers) {
-        if ( $u !== $cand && strpos($cand."/",$u."/") === 0 ) {
+        if ( $u !== $cand && appdataCleanupNgPathUnder($cand,$u) ) {
           foreach ($containers as $n => $paths) $mountedBy[$n] = isset($mountedBy[$n]) ? $mountedBy[$n] + $paths : $paths;
         }
       }
@@ -322,13 +322,13 @@ case "deleteAppdata":
       continue;
     }
     $canon = appdataCleanupNgCanon($path);
-    if ( isset($composeNow[$canon]) ) {
+    if ( appdataCleanupNgCoveredBy($canon,$composeNow) ) {
       $refused[] = $path." (claimed by a compose stack)";
       continue;
     }
     $live = false;
     foreach ( $inUseNow as $u => $unused ) {
-      if ( $canon === $u || strpos($u."/",$canon."/") === 0 ) { $live = true; break; }
+      if ( appdataCleanupNgPathUnder($u,$canon) ) { $live = true; break; }
     }
     if ( $live ) {
       $refused[] = $path." (in use by a running container)";

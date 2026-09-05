@@ -81,6 +81,18 @@ function appdataCleanupNgContainerListTrustworthy($dc) {
   return ( $ok === true && is_array($list) );
 }
 
+# One definition of path containment; callers state the direction.
+# true when $inner is $outer itself or sits underneath it.
+function appdataCleanupNgPathUnder($inner,$outer) {
+  return ( $inner === $outer || strpos($inner."/",$outer."/") === 0 );
+}
+
+# true when $path is at or below any key of $roots
+function appdataCleanupNgCoveredBy($path,$roots) {
+  foreach ( $roots as $r => $unused ) if ( appdataCleanupNgPathUnder($path,$r) ) return true;
+  return false;
+}
+
 # Canonical host path -> true for every path any container currently mounts.
 function appdataCleanupNgInUsePaths($containers) {
   $inUse = array();
