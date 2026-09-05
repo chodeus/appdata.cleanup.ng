@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Lint + build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
+
+      - name: PHP syntax check
+        run: |
+          status=0
+          while IFS= read -r f; do
+            php -l "$f" || status=1
+          done < <(find source -name '*.php')
+          exit $status
+
+      - name: Validate plugin manifest (XML)
+        run: xmllint --noout plugins/appdata.cleanup.ng.plg
+
+      - name: Checkout release scripts
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          repository: chodeus/chodeus-ops
+          ref: 5c3687a2f488fdd69f89c36c98e790203e603109 # main
+          path: .ops
+          sparse-checkout: scripts
+
+      # CHANGELOG.md must render to the committed CHANGES block, pluginURL must point at this
+      # branch, and the md5 in the manifest must match the package actually served for it.
+      - name: Verify changelog, manifest and served package agree
+        run: |
+          python3 .ops/scripts/plg_release.py check \
+            --changelog CHANGELOG.md --plg plugins/appdata.cleanup.ng.plg \
+            --channel stable --branch "${GITHUB_BASE_REF:-$GITHUB_REF_NAME}" --verify-asset
+
+      - name: Test build
+        run: |
+          bash pkg_build.sh --version 0000.00.00 --branch main
+          test -f dist/appdata.cleanup.ng-0000.00.00-x86_64-1.txz

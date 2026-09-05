@@ -1,0 +1,11 @@
+# Normalize line endings on text; never touch binaries (a normalized .txz corrupts and breaks its md5)
+* text=auto eol=lf
+
+*.txz binary
+*.tgz binary
+*.gz  binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
