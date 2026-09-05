@@ -13,7 +13,8 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" min="6.10.0" launch="&launch;" pluginURL="&pluginURL;" icon="paint-brush" support="https://github.com/&github;">
 
 <CHANGES>
-###ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING
+
+ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING
 
 ###2026.07.09
 - "In use by mount" badge now shows which containers reach the folder and via which mounts
@@ -87,7 +88,7 @@ rm -f $(ls /boot/config/plugins/&name;/&name;*.txz 2>/dev/null &#124; grep -v '&
 The 'source' file.
 -->
 <FILE Name="/boot/config/plugins/&name;/&name;-&version;-x86_64-1.txz" Run="upgradepkg --install-new">
-<URL>https://raw.githubusercontent.com/&github;/main/archive/&name;-&version;-x86_64-1.txz</URL>
+<URL>https://github.com/&github;/releases/download/v&version;/&name;-&version;-x86_64-1.txz</URL>
 <MD5>&md5;</MD5>
 </FILE>
 

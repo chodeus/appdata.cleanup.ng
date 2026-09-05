@@ -19,18 +19,29 @@ fi
 CWD="$(pwd)"
 SRC="$CWD/source/$PLUGIN"
 PLG="$CWD/plugins/$PLUGIN.plg"
-ARCHIVE="$CWD/archive"
+OUT="$CWD/dist"
 tmpdir="$CWD/tmp/tmp.$((RANDOM % 1000000))"
 
 [ -d "$SRC" ] || { echo "ERROR: source dir not found: $SRC"; exit 1; }
 [ -f "$PLG" ] || { echo "ERROR: manifest not found: $PLG"; exit 1; }
 
-version=$(date +"%Y.%m.%d")
-existing=$(find "$ARCHIVE" -maxdepth 1 -name "$PLUGIN-$version*-x86_64-1.txz" -type f 2>/dev/null | wc -l | tr -d ' ')
-[ "$existing" -gt 0 ] && version="$version.$existing"
-filename="$ARCHIVE/$PLUGIN-$version-x86_64-1.txz"
+# Usage: pkg_build.sh --version YYYY.MM.DD[.N] [--branch main] [--out DIR]
+# The release workflow owns version numbering; local test builds pass any version explicitly.
+version=""
+branch="main"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --version) version="$2"; shift 2 ;;
+        --branch)  branch="$2";  shift 2 ;;
+        --out)     OUT="$2";     shift 2 ;;
+        *) echo "ERROR: unknown option '$1'"; exit 1 ;;
+    esac
+done
+[ -n "$version" ] || { echo "ERROR: --version is required (e.g. --version 0000.00.00 for a test build)"; exit 1; }
+[ "$branch" = "main" ] || { echo "ERROR: this plugin only publishes from main (got '$branch')"; exit 1; }
+filename="$OUT/$PLUGIN-$version-x86_64-1.txz"
 
-mkdir -p "$tmpdir" "$ARCHIVE"
+mkdir -p "$tmpdir" "$OUT"
 
 cd "$SRC"
 CP_TREE "$tmpdir"
