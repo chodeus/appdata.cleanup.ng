@@ -44,7 +44,7 @@ function findAppdata($volumes) {
     
       # a /config mount, or any host path inside the appdata share on ANY pool/disk
       # (the canonicalizer collapses /mnt/<pool>/ and /mnt/diskN/ to the /mnt/user view)
-      if ( startsWith($testPath,"/config") || appdataCleanupNgPathWithinAppdata($temp[0]) ) {
+      if ( appdataCleanupNgIsConfigTarget($testPath) || appdataCleanupNgPathWithinAppdata($temp[0]) ) {
         $path = $temp[0];
         break;
       }
@@ -78,6 +78,12 @@ function appdataCleanupNgDockerEngineReachable($dc) {
 }
 
 # appdata share root(s) from docker.cfg; deletions are confined within these as a backstop against a crafted request escaping appdata
+# "/config" or "/config/..." only: a bare prefix test also matches /config2 and /config-backup.
+function appdataCleanupNgIsConfigTarget($target) {
+  $t = rtrim(strtolower(trim((string)$target)),"/");
+  return ( $t === "/config" || strpos($t,"/config/") === 0 );
+}
+
 function appdataCleanupNgAppdataRoots() {
   $dockerOptions = @my_parse_ini_file("/boot/config/docker.cfg");
   $cfgPath = isset($dockerOptions['DOCKER_APP_CONFIG_PATH']) ? $dockerOptions['DOCKER_APP_CONFIG_PATH'] : "/mnt/user/appdata/";
@@ -294,7 +300,7 @@ function appdataCleanupNgStaleTemplates($installedNames) {
         if ( ! is_array($v) || ! isset($v['@attributes']) || ( $v['@attributes']['Type'] ?? '' ) !== "Path" ) continue;
         $s = appdataCleanupNgOwnerSegment($v['value'] ?? '');
         if ( $s === "" ) continue;
-        if ( strpos(strtolower((string)($v['@attributes']['Target'] ?? '')),"/config") === 0 ) { $seg = $s; $appdata = $v['value']; break; }
+        if ( appdataCleanupNgIsConfigTarget($v['@attributes']['Target'] ?? '') ) { $seg = $s; $appdata = $v['value']; break; }
         if ( $seg === "" ) { $seg = $s; $appdata = $v['value']; }
       }
     }

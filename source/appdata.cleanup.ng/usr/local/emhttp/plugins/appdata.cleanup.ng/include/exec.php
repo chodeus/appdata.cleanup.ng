@@ -58,7 +58,7 @@ case 'getOrphanAppdata':
 				$temp['HostDir'] = $hostDir;
 				$availableVolumes[$hostDir] = $temp;
 				# an app's OWN appdata is its /config mount
-				if ( strpos(strtolower($target),"/config") === 0 ) {
+				if ( appdataCleanupNgIsConfigTarget($target) ) {
 					$seg = appdataCleanupNgOwnerSegment($hostDir);
 					if ( $seg !== "" && ! isset($ownedBy[$seg]) ) $ownedBy[$seg] = $o['Name'];
 				}
@@ -300,7 +300,7 @@ case "deleteAppdata":
   $refused = array();
   foreach ($paths as $path) {
     $path = (string)$path;
-    if ( $path === "" ) continue;
+    if ( $path === "" ) { $refused[] = "(empty path)"; continue; }
     if ( ! appdataCleanupNgPathWithinAppdata($path) ) {
       $refused[] = $path." (outside appdata)";
       continue;
@@ -346,7 +346,11 @@ case "deleteAppdata":
       $refused[] = $path." (resolves outside appdata or across a mount)";
       continue;
     }
-    exec ("rm -rf ".escapeshellarg($real));
+    $rmOut = array(); $rmRc = 1;
+    exec("rm -rf ".escapeshellarg($real)." 2>&1",$rmOut,$rmRc);
+    if ( $rmRc !== 0 || @file_exists($real) ) {
+      $refused[] = $path." (delete failed)";
+    }
   }
   if ( ! empty($refused) ) {
     appdataCleanupNgLog("refused/failed delete: ".implode(", ",$refused),LOG_WARNING);
