@@ -317,6 +317,8 @@ case "deleteAppdata":
   foreach ($paths as $path) {
     $path = (string)$path;
     if ( $path === "" ) { $refused[] = "(empty path)"; continue; }
+    # a forged value must never reach syslog or the reply verbatim
+    if ( appdataCleanupNgHasControlChars($path) ) { $refused[] = "(invalid path)"; continue; }
     if ( ! appdataCleanupNgPathWithinAppdata($path) ) {
       $refused[] = $path." (outside appdata)";
       continue;
@@ -424,6 +426,7 @@ case "deleteTemplates":
   $n = 0; $refusedTpl = array();
   foreach ( $files as $f ) {
     $f = (string)$f;
+    if ( appdataCleanupNgHasControlChars($f) ) { $refusedTpl[] = "(invalid template path)"; continue; }
     if ( ! isset($staleFiles[$f]) ) { $refusedTpl[] = basename($f)." (not currently stale)"; continue; }
     if ( appdataCleanupNgDeleteTemplate($f) ) $n++;
     else $refusedTpl[] = basename($f)." (delete failed)";
