@@ -334,7 +334,8 @@ case "deleteAppdata":
       $refused[] = $path." (resolves outside appdata)";
       continue;
     }
-    # a container or stack may reference the link or its target, so both names are checked
+    # a container or stack may reference the link or its target, so both names are checked; containment is
+    # one-direction on purpose (as in the scan): a parent mount such as /mnt/user is badged there, not in-use
     $claimed = false; $live = false;
     foreach ( array_unique(array(appdataCleanupNgCanon($path),appdataCleanupNgCanon($real))) as $c ) {
       if ( appdataCleanupNgCoveredBy($c,$composeNow) ) $claimed = true;

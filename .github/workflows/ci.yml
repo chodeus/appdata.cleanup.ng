@@ -28,6 +28,9 @@ jobs:
           done < <(find source -name '*.php')
           exit $status
 
+      - name: Function checker self-test
+        run: php .github/scripts/check-plugin-functions.test.php
+
       - name: Every plugin function called is defined
         run: php .github/scripts/check-plugin-functions.php source
 

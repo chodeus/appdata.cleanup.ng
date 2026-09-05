@@ -20,7 +20,7 @@ foreach ($it as $file) {
 
     // brace depth per token, and the depths at which a class/interface/trait body sits, so a
     // method declaration is never recorded as a global function
-    $inClassAt = array(); $classDepths = array(); $depth = 0; $pendingClass = false;
+    $inClassAt = array(); $classDepths = array(); $depth = 0; $pendingClass = false; $pendingParen = 0;
     $classKeywords = array(T_CLASS, T_INTERFACE, T_TRAIT);
     if (defined('T_ENUM')) $classKeywords[] = T_ENUM;
     $prevSig = null;
@@ -37,9 +37,12 @@ foreach ($it as $file) {
             continue;
         }
         $prevSig = $t;
-        if ($t === "{") {
+        // `new class(<args>) {`: a closure brace inside the arguments is not the class body
+        if ($pendingClass && $t === "(") $pendingParen++;
+        elseif ($pendingClass && $t === ")") $pendingParen--;
+        elseif ($t === "{") {
             $depth++;
-            if ($pendingClass) { $classDepths[$depth] = true; $pendingClass = false; }
+            if ($pendingClass && $pendingParen === 0) { $classDepths[$depth] = true; $pendingClass = false; }
         } elseif ($t === "}") {
             unset($classDepths[$depth]);
             $depth--;
