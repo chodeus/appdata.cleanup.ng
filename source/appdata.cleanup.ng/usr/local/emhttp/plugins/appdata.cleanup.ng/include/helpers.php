@@ -71,16 +71,36 @@ function dirContents($path) {
 # getDockerContainers() returns [] for BOTH "no containers" and an API failure; probe /version to distinguish them.
 # returns true when an empty container list can be trusted as genuinely empty (engine reachable), false when the
 # engine is unreachable. On older Unraid whose DockerClient lacks getDockerJSON, assume reachable (legacy behaviour).
-function appdataCleanupNgDockerEngineReachable($dc) {
+# getDockerContainers() returns [] for both "no containers" and a failed list, so probe the
+# list endpoint itself: an empty in-use set is only trustworthy when the request succeeded.
+function appdataCleanupNgContainerListTrustworthy($dc) {
   if ( ! is_object($dc) || ! method_exists($dc,"getDockerJSON") ) return true;
-  $code = 0; $ver = $dc->getDockerJSON("/version","GET",$code);
-  return ( is_array($ver) && ! empty($ver) );
+  # getDockerJSON sets its by-ref flag to true on success and to an error STRING on failure,
+  # so this must be a strict comparison: a truthy test would accept the error case.
+  $ok = null; $list = @$dc->getDockerJSON("/containers/json?all=1","GET",$ok);
+  return ( $ok === true && is_array($list) );
+}
+
+# Canonical host path -> true for every path any container currently mounts.
+function appdataCleanupNgInUsePaths($containers) {
+  $inUse = array();
+  foreach ( (array)$containers as $ct ) {
+    if ( empty($ct['Volumes']) || ! is_array($ct['Volumes']) ) continue;
+    foreach ( $ct['Volumes'] as $volume ) {
+      $host = explode(":",(string)$volume);
+      $c = appdataCleanupNgCanon($host[0]);
+      if ( $c !== "" && $c !== "/" ) $inUse[$c] = true;
+    }
+  }
+  return $inUse;
 }
 
 # appdata share root(s) from docker.cfg; deletions are confined within these as a backstop against a crafted request escaping appdata
 # "/config" or "/config/..." only: a bare prefix test also matches /config2 and /config-backup.
 function appdataCleanupNgIsConfigTarget($target) {
-  $t = rtrim(strtolower(trim((string)$target)),"/");
+  $raw = (string)$target;
+  if ( preg_match('/[\x00-\x1f\x7f]/',$raw) ) return false;
+  $t = rtrim(strtolower(trim($raw)),"/");
   return ( $t === "/config" || strpos($t,"/config/") === 0 );
 }
 

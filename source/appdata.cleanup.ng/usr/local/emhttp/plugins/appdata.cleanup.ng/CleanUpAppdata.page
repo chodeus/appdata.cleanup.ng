@@ -171,7 +171,13 @@ function deleteSelectedTemplates() {
 		confirmButtonText: "<?tr("Delete templates")?>",
 		closeOnConfirm: true
 	}, function() {
-		$.post(caURL,{action:'deleteTemplates',files:files,csrf_token:csrf_token},function(){ loadAppdata(); });
+		$.post(caURL,{action:'deleteTemplates',files:files,csrf_token:csrf_token},function(data) {
+			var reply = $.trim(String(data || ""));
+			if (reply.indexOf("deleted") !== 0) {
+				swal("<?tr("Nothing was deleted")?>",reply || "<?tr("The server did not answer")?>","error");
+			}
+			loadAppdata();
+		});
 	});
 }
 

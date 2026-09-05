@@ -21,7 +21,7 @@ case 'getOrphanAppdata':
     $DockerClient = new DockerClient();
     $info = $DockerClient->getDockerContainers();
     # getDockerContainers() returns [] for BOTH "no containers" and an API failure; disambiguate before trusting it
-    if ( empty($info) ) $dockerHealthy = appdataCleanupNgDockerEngineReachable($DockerClient);
+    if ( empty($info) ) $dockerHealthy = appdataCleanupNgContainerListTrustworthy($DockerClient);
   } else {
     $info = array();
   }
@@ -40,8 +40,10 @@ case 'getOrphanAppdata':
 		$o = readXmlFile($xmlfile);
 		if ( !$o ) continue;
 		if ( ! isset($o['Config']) || ! is_array($o['Config']) ) continue;
+		# one <Config> arrives as a record rather than a list (same normalisation as appdataCleanupNgStaleTemplates)
+		$configs = isset($o['Config'][0]) ? $o['Config'] : array($o['Config']);
 
-		foreach ($o['Config'] as $volumeArray) {
+		foreach ($configs as $volumeArray) {
 			if ( ! isset($volumeArray['@attributes']) ) {
 				continue;
 			}
@@ -49,7 +51,7 @@ case 'getOrphanAppdata':
 				continue;
 			$hostDir = (string)($volumeArray['value'] ?? "");
 			$target  = (string)($volumeArray['@attributes']['Target'] ?? "");
-			if ( $hostDir === "" ) continue;
+			if ( $hostDir === "" || $target === "" ) continue;
 			$tplSeg = appdataCleanupNgOwnerSegment($hostDir);
 			if ( $tplSeg !== "" ) $templateSegs[$tplSeg] = true;
 			$volumeList[0] = $hostDir.":".$target;
@@ -293,16 +295,35 @@ case "deleteAppdata":
     echo "docker not running"; break;
   }
   $dcDel = new DockerClient();
-  if ( empty($dcDel->getDockerContainers()) && ! appdataCleanupNgDockerEngineReachable($dcDel) ) {
+  $liveDel = $dcDel->getDockerContainers();
+  if ( empty($liveDel) && ! appdataCleanupNgContainerListTrustworthy($dcDel) ) {
     appdataCleanupNgLog("deleteAppdata refused: docker engine unreachable (can't confirm orphan status)",LOG_WARNING);
     echo "docker unreachable"; break;
   }
+  # The scan that produced these paths is a snapshot; a container can start before the user
+  # confirms. Re-check against the live mounts and the compose set instead of trusting it.
+  $inUseNow = appdataCleanupNgInUsePaths($liveDel);
+  $composeNow = array();
+  foreach ( appdataCleanupNgComposeReferencedPaths() as $cp ) $composeNow[$cp] = true;
   $refused = array();
   foreach ($paths as $path) {
     $path = (string)$path;
     if ( $path === "" ) { $refused[] = "(empty path)"; continue; }
     if ( ! appdataCleanupNgPathWithinAppdata($path) ) {
       $refused[] = $path." (outside appdata)";
+      continue;
+    }
+    $canon = appdataCleanupNgCanon($path);
+    if ( isset($composeNow[$canon]) ) {
+      $refused[] = $path." (claimed by a compose stack)";
+      continue;
+    }
+    $live = false;
+    foreach ( $inUseNow as $u => $unused ) {
+      if ( $canon === $u || strpos($u."/",$canon."/") === 0 ) { $live = true; break; }
+    }
+    if ( $live ) {
+      $refused[] = $path." (in use by a running container)";
       continue;
     }
     # ZFS dataset: must be destroyed, never rm -rf (which empties a mounted dataset)
@@ -392,13 +413,15 @@ case "deleteTemplates":
   foreach ( (array)$info as $c ) if ( ! empty($c['Name']) ) $installedNames[] = $c['Name'];
   $staleFiles = array();
   foreach ( appdataCleanupNgStaleTemplates($installedNames) as $t ) $staleFiles[$t['file']] = true;
-  $n = 0; $refused = 0;
+  $n = 0; $refusedTpl = array();
   foreach ( $files as $f ) {
     $f = (string)$f;
-    if ( ! isset($staleFiles[$f]) ) { $refused++; continue; }   # not a currently-stale template -> refuse
+    if ( ! isset($staleFiles[$f]) ) { $refusedTpl[] = basename($f)." (not currently stale)"; continue; }
     if ( appdataCleanupNgDeleteTemplate($f) ) $n++;
+    else $refusedTpl[] = basename($f)." (delete failed)";
   }
-  appdataCleanupNgLog("deleted ".$n." stale template(s)".($refused ? ", refused ".$refused." non-stale" : ""),LOG_INFO);
+  appdataCleanupNgLog("deleted ".$n." stale template(s)".( $refusedTpl ? ", refused: ".implode(", ",$refusedTpl) : "" ),LOG_INFO);
+  if ( ! empty($refusedTpl) ) { echo "refused ".count($refusedTpl)." of ".count($files).": ".implode("; ",$refusedTpl); break; }
   echo "deleted ".$n;
   break;
 
