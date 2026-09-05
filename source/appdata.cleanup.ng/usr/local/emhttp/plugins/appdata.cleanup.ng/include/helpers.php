@@ -120,9 +120,13 @@ function appdataCleanupNgAppdataRoots() {
   $dockerOptions = @my_parse_ini_file("/boot/config/docker.cfg");
   $cfgPath = isset($dockerOptions['DOCKER_APP_CONFIG_PATH']) ? $dockerOptions['DOCKER_APP_CONFIG_PATH'] : "/mnt/user/appdata/";
   $cfgPath = rtrim(preg_replace('#/+#','/',trim((string)$cfgPath)),"/");
-  # a control character or a traversal segment makes the configured root unusable: fall back to
-  # the documented default rather than deriving roots that silently match nothing
-  if ( $cfgPath === "" || preg_match('/[\x00-\x1f\x7f]/',$cfgPath) || preg_match('#(^|/)\.\.?(/|$)#',$cfgPath) ) {
+  # The configured value must itself be an absolute /mnt/<pool>/<share> path. Anything else
+  # ("foo", "/mnt/user", "/etc/passwd") would have its basename spliced into /mnt/user/<x>,
+  # making an unrelated share deletable. Fall back to the documented default instead.
+  if ( $cfgPath === ""
+    || preg_match('/[\x00-\x1f\x7f]/',$cfgPath)
+    || preg_match('#(^|/)\.\.?(/|$)#',$cfgPath)
+    || ! preg_match('#^/mnt/[^/]+/[^/]+#',$cfgPath) ) {
     $cfgPath = "/mnt/user/appdata";
   }
   $share = basename($cfgPath);
