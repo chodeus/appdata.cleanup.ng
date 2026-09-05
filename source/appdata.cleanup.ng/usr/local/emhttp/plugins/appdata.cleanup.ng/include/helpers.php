@@ -62,14 +62,6 @@ function findAppdata($volumes) {
 #                                                           #
 #############################################################
 
-function dirContents($path) {
-  $dirContents = @scandir($path);
-  if ( ! $dirContents ) {
-    $dirContents = array();
-  }
-  return array_diff($dirContents,array(".",".."));
-}
-
 # getDockerContainers() returns [] for BOTH "no containers" and an API failure; probe /version to distinguish them.
 # returns true when an empty container list can be trusted as genuinely empty (engine reachable), false when the
 # engine is unreachable. On older Unraid whose DockerClient lacks getDockerJSON, assume reachable (legacy behaviour).
