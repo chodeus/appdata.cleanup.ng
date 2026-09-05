@@ -503,6 +503,12 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
       }
       if ( preg_match_all($pattern,$contents,$matches,PREG_SET_ORDER) ) {
         foreach ( $matches as $hit ) {
+          # a bind we cannot resolve (traversal, control chars) would protect the wrong folder:
+          # "appdata/a/../b" yields "a" while the stack really uses "b". Fail closed instead.
+          if ( preg_match('/[\x00-\x1f\x7f]/',$hit[2]) || preg_match('#(^|/)\.\.(/|$)#',$hit[2]) ) {
+            $uncertain = true;
+            continue;
+          }
           $firstSeg = strtok($hit[2],"/");         # appdata folder name under the root
           if ( $firstSeg === false || $firstSeg === "" ) continue;
           $full = $hit[1]."/".$firstSeg;
