@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   release:
-    uses: chodeus/chodeus-ops/.github/workflows/unraid-plugin-release.yml@5c3687a2f488fdd69f89c36c98e790203e603109 # main
+    uses: chodeus/chodeus-ops/.github/workflows/unraid-plugin-release.yml@a08ae6259fdba04b2f97e846544e8afdb8bb36fd # main
     with:
       plg_file: plugins/appdata.cleanup.ng.plg
       stable_branch: main
