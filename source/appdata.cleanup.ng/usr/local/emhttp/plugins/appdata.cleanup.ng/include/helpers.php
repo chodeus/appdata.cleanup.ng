@@ -109,9 +109,15 @@ function appdataCleanupNgInUsePaths($containers) {
 
 # appdata share root(s) from docker.cfg; deletions are confined within these as a backstop against a crafted request escaping appdata
 # "/config" or "/config/..." only: a bare prefix test also matches /config2 and /config-backup.
+# One definition of "unsafe for a path": control characters including DEL. Four call sites
+# previously carried two different sets, which is how they drift apart.
+function appdataCleanupNgHasControlChars($s) {
+  return (bool)preg_match('/[\x00-\x1f\x7f]/',(string)$s);
+}
+
 function appdataCleanupNgIsConfigTarget($target) {
   $raw = (string)$target;
-  if ( preg_match('/[\x00-\x1f\x7f]/',$raw) ) return false;
+  if ( appdataCleanupNgHasControlChars($raw) ) return false;
   $t = rtrim(strtolower(trim($raw)),"/");
   return ( $t === "/config" || strpos($t,"/config/") === 0 );
 }
@@ -124,7 +130,7 @@ function appdataCleanupNgAppdataRoots() {
   # ("foo", "/mnt/user", "/etc/passwd") would have its basename spliced into /mnt/user/<x>,
   # making an unrelated share deletable. Fall back to the documented default instead.
   if ( $cfgPath === ""
-    || preg_match('/[\x00-\x1f\x7f]/',$cfgPath)
+    || appdataCleanupNgHasControlChars($cfgPath)
     || preg_match('#(^|/)\.\.?(/|$)#',$cfgPath)
     || ! preg_match('#^/mnt/[^/]+/[^/]+#',$cfgPath) ) {
     $cfgPath = "/mnt/user/appdata";
@@ -140,7 +146,7 @@ function appdataCleanupNgAppdataRoots() {
 }
 
 function appdataCleanupNgPathWithinAppdata($path) {
-  if ( preg_match('/[\x00-\x1f]/',(string)$path) ) return false;   # reject control chars / embedded newlines before any normalization
+  if ( appdataCleanupNgHasControlChars($path) ) return false;   # before any normalization
   $p = appdataCleanupNgCanon($path);
   if ( $p === "" || $p[0] !== "/" ) return false;
   if ( strpos("/".$p."/","/../") !== false ) return false; # reject traversal
@@ -524,7 +530,7 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
         foreach ( $matches as $hit ) {
           # a bind we cannot resolve (traversal, control chars) would protect the wrong folder:
           # "appdata/a/../b" yields "a" while the stack really uses "b". Fail closed instead.
-          if ( preg_match('/[\x00-\x1f\x7f]/',$hit[2]) || preg_match('#(^|/)\.\.(/|$)#',$hit[2]) ) {
+          if ( appdataCleanupNgHasControlChars($hit[2]) || preg_match('#(^|/)\.\.(/|$)#',$hit[2]) ) {
             $uncertain = true;
             continue;
           }
