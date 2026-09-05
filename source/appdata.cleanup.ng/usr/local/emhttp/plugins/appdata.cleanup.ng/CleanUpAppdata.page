@@ -175,7 +175,7 @@ function deleteSelectedTemplates() {
 			var reply = $.trim(String(data || ""));
 			if (reply.indexOf("refused ") === 0) {
 				swal("<?tr("Deletion incomplete")?>",reply,"warning");
-			} else if (reply.indexOf("deleted") !== 0) {
+			} else if ( ! /^deleted \d+$/.test(reply)) {
 				swal("<?tr("Nothing was deleted")?>",reply || "<?tr("The server did not answer")?>","error");
 			}
 			loadAppdata();
