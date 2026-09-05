@@ -62,7 +62,7 @@ case 'getOrphanAppdata':
 				# an app's OWN appdata is its /config mount
 				if ( appdataCleanupNgIsConfigTarget($target) ) {
 					$seg = appdataCleanupNgOwnerSegment($hostDir);
-					if ( $seg !== "" && ! isset($ownedBy[$seg]) ) $ownedBy[$seg] = $o['Name'];
+					if ( $seg !== "" && ! isset($ownedBy[$seg]) ) $ownedBy[$seg] = $temp['Name'];
 				}
 			}
 		}
@@ -75,8 +75,8 @@ case 'getOrphanAppdata':
     if ( ! is_array($installedDocker['Volumes']) ) continue;
     foreach ($installedDocker['Volumes'] as $volume) {
       $host = explode(":",$volume);
-      $c = appdataCleanupNgCanon($host[0]);
-      if ( $c !== "" && $c !== "/" ) $inUseBy[$c][(string)$installedDocker['Name']][$host[0]] = true;
+      # a mount through a symlink also protects the link's target
+      foreach ( appdataCleanupNgPathViews($host[0]) as $c ) $inUseBy[$c][(string)$installedDocker['Name']][$host[0]] = true;
     }
   }
 
@@ -323,31 +323,30 @@ case "deleteAppdata":
       $refused[] = $path." (outside appdata)";
       continue;
     }
-    $canon = appdataCleanupNgCanon($path);
-    if ( appdataCleanupNgCoveredBy($canon,$composeNow) ) {
-      $refused[] = $path." (claimed by a compose stack)";
+    # resolve symlinks BEFORE any protection check: a link inside appdata would otherwise pass the checks
+    # under its own name while rm/zfs acts on its target, so every guard below runs on $real
+    $real = @realpath(str_replace("/mnt/cache/","/mnt/user/",$path));
+    if ( $real === false ) {
+      $refused[] = $path." (not found)";
       continue;
     }
-    $live = false;
-    foreach ( $inUseNow as $u => $unused ) {
-      if ( appdataCleanupNgPathUnder($u,$canon) ) { $live = true; break; }
-    }
-    if ( $live ) {
-      $refused[] = $path." (in use by an installed container)";
+    if ( ! appdataCleanupNgPathWithinAppdata($real) ) {
+      $refused[] = $path." (resolves outside appdata)";
       continue;
     }
+    # a container or stack may reference the link or its target, so both names are checked
+    $claimed = false; $live = false;
+    foreach ( array_unique(array(appdataCleanupNgCanon($path),appdataCleanupNgCanon($real))) as $c ) {
+      if ( appdataCleanupNgCoveredBy($c,$composeNow) ) $claimed = true;
+      foreach ( $inUseNow as $u => $unused ) if ( appdataCleanupNgPathUnder($u,$c) ) $live = true;
+    }
+    if ( $claimed ) { $refused[] = $path." (claimed by a compose stack)"; continue; }
+    if ( $live )    { $refused[] = $path." (in use by an installed container)"; continue; }
     # ZFS dataset: must be destroyed, never rm -rf (which empties a mounted dataset)
-    $dataset = appdataCleanupNgResolveZfsDataset($path);
+    $dataset = appdataCleanupNgResolveZfsDataset($real);
     if ( $dataset !== "" ) {
       if ( ! $zfsEnabled ) {
         $refused[] = $path." (ZFS dataset; enable ZFS deletion)";
-        continue;
-      }
-      # re-confine the resolved physical target (mirror the rm branch below): a symlink in
-      # appdata whose target is an external ZFS dataset must NOT be zfs-destroyed
-      $realZ = @realpath(str_replace("/mnt/cache/","/mnt/user/",$path));
-      if ( $realZ === false || ! appdataCleanupNgPathWithinAppdata($realZ) ) {
-        $refused[] = $path." (ZFS dataset resolves outside appdata)";
         continue;
       }
       $r = appdataCleanupNgZfsDestroy($dataset);
@@ -360,21 +359,8 @@ case "deleteAppdata":
       continue;
     }
     # never rm -rf across a mount boundary that isn't a recognized dataset
-    if ( appdataCleanupNgIsMountPoint($path) ) {
+    if ( appdataCleanupNgIsMountPoint($real) ) {
       $refused[] = $path." (mount point, not a known dataset)";
-      continue;
-    }
-    $userPath = str_replace("/mnt/cache/","/mnt/user/",$path);
-    # resolve symlinks and re-confine the PHYSICAL target before deleting: the guards above run on the submitted
-    # string, but a symlinked path component would otherwise let rm -rf act outside appdata (verified: GNU rm
-    # follows an intermediate symlinked component and a trailing-slash leaf symlink). rm exactly what we validated.
-    $real = @realpath($userPath);
-    if ( $real === false ) {
-      $refused[] = $path." (not found)";
-      continue;
-    }
-    if ( ! appdataCleanupNgPathWithinAppdata($real) || appdataCleanupNgIsMountPoint($real) ) {
-      $refused[] = $path." (resolves outside appdata or across a mount)";
       continue;
     }
     $rmOut = array(); $rmRc = 1;

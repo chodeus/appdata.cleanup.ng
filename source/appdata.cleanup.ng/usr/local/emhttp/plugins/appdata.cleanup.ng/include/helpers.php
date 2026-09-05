@@ -84,15 +84,25 @@ function appdataCleanupNgCoveredBy($path,$roots) {
   return false;
 }
 
-# Canonical host path -> true for every path any container currently mounts.
+# Canonical forms of a path as written and as resolved, so a symlink and its target compare equal.
+function appdataCleanupNgPathViews($path) {
+  $views = array();
+  $rp = @realpath((string)$path);
+  foreach ( array((string)$path, $rp === false ? "" : $rp) as $p ) {
+    $c = appdataCleanupNgCanon($p);
+    if ( $c !== "" && $c !== "/" ) $views[$c] = true;
+  }
+  return array_keys($views);
+}
+
+# Canonical host path -> true for every path any container currently mounts, links resolved.
 function appdataCleanupNgInUsePaths($containers) {
   $inUse = array();
   foreach ( (array)$containers as $ct ) {
     if ( empty($ct['Volumes']) || ! is_array($ct['Volumes']) ) continue;
     foreach ( $ct['Volumes'] as $volume ) {
       $host = explode(":",(string)$volume);
-      $c = appdataCleanupNgCanon($host[0]);
-      if ( $c !== "" && $c !== "/" ) $inUse[$c] = true;
+      foreach ( appdataCleanupNgPathViews($host[0]) as $c ) $inUse[$c] = true;
     }
   }
   return $inUse;
@@ -537,7 +547,7 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
           $firstSeg = strtok($hit[2],"/");         # appdata folder name under the root
           if ( $firstSeg === false || $firstSeg === "" ) continue;
           $full = $hit[1]."/".$firstSeg;
-          $protected[appdataCleanupNgCanon($full)] = true;
+          foreach ( appdataCleanupNgPathViews($full) as $c ) $protected[$c] = true;
         }
       }
       # fail-safe: host root is an unresolved ${var}/$var but its next segment names an existing appdata folder, so protect it conservatively
@@ -547,7 +557,7 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
           foreach ( $roots as $r ) {
             $cand = $r."/".$seg;
             if ( @is_dir($cand) ) {
-              $protected[appdataCleanupNgCanon($cand)] = true;
+              foreach ( appdataCleanupNgPathViews($cand) as $c ) $protected[$c] = true;
             }
           }
         }
