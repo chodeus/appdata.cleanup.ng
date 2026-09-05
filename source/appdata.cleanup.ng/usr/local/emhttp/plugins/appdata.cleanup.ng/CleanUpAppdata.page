@@ -8,8 +8,8 @@ require_once("/usr/local/emhttp/plugins/appdata.cleanup.ng/include/helpers.php")
 
 $plugin = "appdata.cleanup.ng";
 $dockerRunning = is_dir("/var/lib/docker/tmp") ? "true" : "false";
-$acngDockerCfg = @my_parse_ini_file("/boot/config/docker.cfg");
-$acngAppdataLoc = isset($acngDockerCfg['DOCKER_APP_CONFIG_PATH']) ? rtrim($acngDockerCfg['DOCKER_APP_CONFIG_PATH'],"/") : "/mnt/user/appdata";
+# label the root the plugin actually uses, not the raw config value it may have rejected
+$acngAppdataLoc = appdataCleanupNgAppdataRoots()[0] ?? "/mnt/user/appdata";
 if ( ! isset($var) || ! is_array($var) ) $var = @parse_ini_file("/var/local/emhttp/var.ini");
 $csrfToken = isset($var['csrf_token']) ? $var['csrf_token'] : "";
 
@@ -97,7 +97,7 @@ $(function() {
 	if ( "<?=$dockerRunning?>" == "false" ) {
 		swal({
 			title: "<?tr("Docker Not Running")?>",
-			text: "<?tr("Because the docker service is not currently running, this module will prompt you to delete the appdata for any/all docker applications which are installed.")?>",
+			text: "<?tr("Docker is not running, so the plugin cannot tell which appdata folders are in use. No folders will be offered and deletion is refused until Docker is responsive.")?>",
 			type: "warning"
 		});
 	}

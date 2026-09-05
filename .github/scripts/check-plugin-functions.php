@@ -17,7 +17,28 @@ foreach ($it as $file) {
         if (is_array($t) && in_array($t[0], array(T_WHITESPACE, T_COMMENT, T_DOC_COMMENT), true)) continue;
         $meaningful[] = $i;
     }
-    $posOf = array_flip($meaningful);
+
+    // brace depth per token, and the depths at which a class/interface/trait body sits, so a
+    // method declaration is never recorded as a global function
+    $inClassAt = array(); $classDepths = array(); $depth = 0; $pendingClass = false;
+    $classKeywords = array(T_CLASS, T_INTERFACE, T_TRAIT);
+    if (defined('T_ENUM')) $classKeywords[] = T_ENUM;
+    foreach ($tokens as $i => $t) {
+        // record membership as it stands AT this token; the set is mutated as scopes close
+        $inClassAt[$i] = !empty($classDepths);
+        if (is_array($t)) {
+            if (in_array($t[0], $classKeywords, true)) $pendingClass = true;
+            elseif (in_array($t[0], array(T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES), true)) $depth++;
+            continue;
+        }
+        if ($t === "{") {
+            $depth++;
+            if ($pendingClass) { $classDepths[$depth] = true; $pendingClass = false; }
+        } elseif ($t === "}") {
+            unset($classDepths[$depth]);
+            $depth--;
+        }
+    }
 
     foreach ($meaningful as $n => $i) {
         $t = $tokens[$i];
@@ -31,7 +52,11 @@ foreach ($it as $file) {
         $prev = $n > 0 ? $tokens[$meaningful[$n - 1]] : null;
         $next = isset($meaningful[$n + 1]) ? $tokens[$meaningful[$n + 1]] : null;
 
-        if (is_array($prev) && $prev[0] === T_FUNCTION) { $defined[$name] = true; continue; }
+        if (is_array($prev) && $prev[0] === T_FUNCTION) {
+            // only a top-level declaration defines a global function
+            if (!$inClassAt[$i]) $defined[$name] = true;
+            continue;
+        }
         // a method call ($x->n(), $x?->n(), Cls::n()) is not one of ours
         $methodOps = array(T_OBJECT_OPERATOR, T_DOUBLE_COLON);
         if (defined('T_NULLSAFE_OBJECT_OPERATOR')) $methodOps[] = T_NULLSAFE_OBJECT_OPERATOR;
