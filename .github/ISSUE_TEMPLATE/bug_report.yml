@@ -14,7 +14,7 @@ body:
     id: plugin-version
     attributes:
       label: Appdata Cleanup NG Version
-      placeholder: "e.g. 2026.06.20 (shown at the bottom of the plugin page)"
+      placeholder: "e.g. 2026.07.09 (shown at the bottom of the plugin page)"
     validations:
       required: true
 
