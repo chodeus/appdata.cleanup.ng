@@ -331,7 +331,7 @@ case "deleteAppdata":
       if ( appdataCleanupNgPathUnder($u,$canon) ) { $live = true; break; }
     }
     if ( $live ) {
-      $refused[] = $path." (in use by a running container)";
+      $refused[] = $path." (in use by an installed container)";
       continue;
     }
     # ZFS dataset: must be destroyed, never rm -rf (which empties a mounted dataset)
