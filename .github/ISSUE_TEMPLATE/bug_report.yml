@@ -1,0 +1,45 @@
+name: Bug Report
+description: Report a bug or unexpected behavior with Appdata Cleanup NG
+labels: ["bug"]
+body:
+  - type: input
+    id: unraid-version
+    attributes:
+      label: Unraid Version
+      placeholder: "e.g. 7.0.1"
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Appdata Cleanup NG Version
+      placeholder: "e.g. 2026.06.20 (shown at the bottom of the plugin page)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      placeholder: "Describe the issue and how to reproduce it."
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        Optional but very helpful — open the plugin and click **Capture Diagnostics**, then paste the contents of the downloaded `appdata.cleanup.ng-diagnostics.txt` here.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: "Optional — drag and drop or paste any relevant screenshots."
+    validations:
+      required: false
