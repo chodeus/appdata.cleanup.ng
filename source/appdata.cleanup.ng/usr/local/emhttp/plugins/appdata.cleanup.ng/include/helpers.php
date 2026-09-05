@@ -138,7 +138,10 @@ function appdataCleanupNgAppdataRoots() {
 }
 
 function appdataCleanupNgPathWithinAppdata($path) {
-  if ( appdataCleanupNgHasControlChars($path) ) return false;   # before any normalization
+  # reject control characters and traversal on the raw value: normalization must not get the
+  # chance to rewrite a traversal into something that looks like a valid appdata path
+  if ( appdataCleanupNgHasControlChars($path) ) return false;
+  if ( preg_match('#(^|/)\.\.(/|$)#',(string)$path) ) return false;
   $p = appdataCleanupNgCanon($path);
   if ( $p === "" || $p[0] !== "/" ) return false;
   if ( strpos("/".$p."/","/../") !== false ) return false; # reject traversal
@@ -158,7 +161,7 @@ function appdataCleanupNgCanon($path) {
   $p = preg_replace('#/\.$#','',$p);
   # collapse any pool/array-disk mount to its /mnt/user view so the same folder compares equal regardless of pool; skip mounts that are genuinely not the user share
   if ( preg_match('#^/mnt/([^/]+)(/.*)?$#',$p,$m) ) {
-    $skip = array("user","user0","disks","remotes","rootsharecache","addons");
+    $skip = array("user","user0","disks","remotes","rootsharecache","addons",".","..");
     if ( ! in_array($m[1],$skip,true) ) {
       $p = "/mnt/user".(isset($m[2]) ? $m[2] : "");
     }
