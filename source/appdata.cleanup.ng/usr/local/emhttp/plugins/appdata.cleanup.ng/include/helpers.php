@@ -47,21 +47,6 @@ function findAppdata($volumes) {
   return $path;
 }
 
-#############################################################
-#                                                           #
-# Helper function to return an array of directory contents. #
-# Returns an empty array if the directory does not exist    #
-#                                                           #
-#############################################################
-
-function dirContents($path) {
-  $dirContents = @scandir($path);
-  if ( ! $dirContents ) {
-    $dirContents = array();
-  }
-  return array_diff($dirContents,array(".",".."));
-}
-
 # getDockerContainers() returns [] for both "no containers" and a failed list, so probe the
 # list endpoint itself: an empty in-use set is only trustworthy when the request succeeded.
 function appdataCleanupNgContainerListTrustworthy($dc) {
