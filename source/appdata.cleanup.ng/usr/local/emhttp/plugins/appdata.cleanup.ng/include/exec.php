@@ -341,7 +341,7 @@ case "deleteAppdata":
         $refused[] = $path." (ZFS dataset; enable ZFS deletion)";
         continue;
       }
-      # re-confine the resolved physical target (mirror the rm branch at 304-312): a symlink in
+      # re-confine the resolved physical target (mirror the rm branch below): a symlink in
       # appdata whose target is an external ZFS dataset must NOT be zfs-destroyed
       $realZ = @realpath(str_replace("/mnt/cache/","/mnt/user/",$path));
       if ( $realZ === false || ! appdataCleanupNgPathWithinAppdata($realZ) ) {

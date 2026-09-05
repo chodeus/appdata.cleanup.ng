@@ -62,9 +62,6 @@ function dirContents($path) {
   return array_diff($dirContents,array(".",".."));
 }
 
-# getDockerContainers() returns [] for BOTH "no containers" and an API failure; probe /version to distinguish them.
-# returns true when an empty container list can be trusted as genuinely empty (engine reachable), false when the
-# engine is unreachable. On older Unraid whose DockerClient lacks getDockerJSON, assume reachable (legacy behaviour).
 # getDockerContainers() returns [] for both "no containers" and a failed list, so probe the
 # list endpoint itself: an empty in-use set is only trustworthy when the request succeeded.
 function appdataCleanupNgContainerListTrustworthy($dc) {
@@ -101,14 +98,12 @@ function appdataCleanupNgInUsePaths($containers) {
   return $inUse;
 }
 
-# appdata share root(s) from docker.cfg; deletions are confined within these as a backstop against a crafted request escaping appdata
-# "/config" or "/config/..." only: a bare prefix test also matches /config2 and /config-backup.
-# One definition of "unsafe for a path": control characters including DEL. Four call sites
-# previously carried two different sets, which is how they drift apart.
+# one definition of "unsafe for a path": control characters including DEL
 function appdataCleanupNgHasControlChars($s) {
   return (bool)preg_match('/[\x00-\x1f\x7f]/',(string)$s);
 }
 
+# "/config" or "/config/..." only: a bare prefix test also matches /config2 and /config-backup
 function appdataCleanupNgIsConfigTarget($target) {
   # allowlist /config[/...] after rejecting control characters and traversal on the raw value
   $raw = (string)$target;
@@ -117,6 +112,7 @@ function appdataCleanupNgIsConfigTarget($target) {
   return (bool)preg_match('#^/config(/|$)#',$t);
 }
 
+# appdata share root(s) from docker.cfg; deletions are confined within these as a backstop against a crafted request escaping appdata
 function appdataCleanupNgAppdataRoots() {
   $dockerOptions = @my_parse_ini_file("/boot/config/docker.cfg");
   $raw = isset($dockerOptions['DOCKER_APP_CONFIG_PATH']) ? (string)$dockerOptions['DOCKER_APP_CONFIG_PATH'] : "/mnt/user/appdata/";
