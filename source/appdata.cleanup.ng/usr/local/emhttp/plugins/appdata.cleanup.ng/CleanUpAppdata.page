@@ -173,7 +173,9 @@ function deleteSelectedTemplates() {
 	}, function() {
 		$.post(caURL,{action:'deleteTemplates',files:files,csrf_token:csrf_token},function(data) {
 			var reply = $.trim(String(data || ""));
-			if (reply.indexOf("deleted") !== 0) {
+			if (reply.indexOf("refused ") === 0) {
+				swal("<?tr("Deletion incomplete")?>",reply,"warning");
+			} else if (reply.indexOf("deleted") !== 0) {
 				swal("<?tr("Nothing was deleted")?>",reply || "<?tr("The server did not answer")?>","error");
 			}
 			loadAppdata();
@@ -257,6 +259,9 @@ function deleteAppdata() {
 			var reply = $.trim(String(data || ""));
 			if (reply === "deleted") {
 				swal("<?tr("Deleted")?>","","success");
+			} else if (reply.indexOf("refused ") === 0 && reply.indexOf("refused 0 ") !== 0) {
+				// "refused N of M": some may still have been deleted, so do not claim nothing was
+				swal("<?tr("Deletion incomplete")?>",reply,"warning");
 			} else {
 				swal("<?tr("Nothing was deleted")?>",reply || "<?tr("The server did not answer")?>","error");
 			}

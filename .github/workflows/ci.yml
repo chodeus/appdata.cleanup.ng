@@ -28,6 +28,19 @@ jobs:
           done < <(find source -name '*.php')
           exit $status
 
+      # php -l cannot see an undefined function, so a rename that misses a call site
+      # ships as a fatal on that code path. Catch it here instead.
+      - name: Every plugin function called is defined
+        run: |
+          src="source/appdata.cleanup.ng/usr/local/emhttp/plugins/appdata.cleanup.ng"
+          defined=$(grep -rhoE '^function (appdataCleanupNg\w+)' "$src" | awk '{print $2}' | sort -u)
+          called=$(grep -rhoE '\bappdataCleanupNg\w+\s*\(' "$src" | tr -d ' (' | sort -u)
+          missing=$(comm -13 <(echo "$defined") <(echo "$called"))
+          if [ -n "$missing" ]; then
+            echo "undefined plugin functions are called:"; echo "${missing//$'\n'/, }"; exit 1
+          fi
+          echo "all $(echo "$called" | wc -l | tr -d ' ') plugin function calls resolve"
+
       - name: Validate plugin manifest (XML)
         run: xmllint --noout plugins/appdata.cleanup.ng.plg
 

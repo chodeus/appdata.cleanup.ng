@@ -304,7 +304,15 @@ case "deleteAppdata":
   # confirms. Re-check against the live mounts and the compose set instead of trusting it.
   $inUseNow = appdataCleanupNgInUsePaths($liveDel);
   $composeNow = array();
-  foreach ( appdataCleanupNgComposeReferencedPaths() as $cp ) $composeNow[$cp] = true;
+  $composeUncertainDel = false;
+  foreach ( appdataCleanupNgComposeReferencedPaths($composeUncertainDel) as $cp ) $composeNow[$cp] = true;
+  # fail closed: an unreadable compose file or an unresolved ${VAR} host path means the
+  # protected set is incomplete, so we cannot prove a stopped stack is not being deleted
+  if ( $composeUncertainDel ) {
+    appdataCleanupNgLog("deleteAppdata refused: compose protection incomplete (unreadable file or unresolved variable)",LOG_WARNING);
+    echo "refused: compose protection is incomplete, so a stopped stack cannot be ruled out";
+    break;
+  }
   $refused = array();
   foreach ($paths as $path) {
     $path = (string)$path;
@@ -405,7 +413,7 @@ case "deleteTemplates":
   }
   $dc = new DockerClient();
   $info = $dc->getDockerContainers();
-  if ( empty($info) && ! appdataCleanupNgDockerEngineReachable($dc) ) {
+  if ( empty($info) && ! appdataCleanupNgContainerListTrustworthy($dc) ) {
     appdataCleanupNgLog("deleteTemplates refused: docker engine unreachable (can't confirm staleness)",LOG_WARNING);
     echo "docker unreachable"; break;
   }
