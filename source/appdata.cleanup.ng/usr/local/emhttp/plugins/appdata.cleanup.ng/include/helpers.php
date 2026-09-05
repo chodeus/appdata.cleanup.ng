@@ -32,19 +32,13 @@ if ( ! function_exists("my_parse_ini_string") ) {
 
 function findAppdata($volumes) {
   $path = false;
-  $dockerOptions = (array)@my_parse_ini_file("/boot/config/docker.cfg");
-  $shareName = basename((string)($dockerOptions['DOCKER_APP_CONFIG_PATH'] ?? ""));
-  if ( ! is_file("/boot/config/shares/$shareName.cfg") ) { 
-    $shareName = "****";
-  }
   if ( is_array($volumes) ) {
     foreach ($volumes as $volume) {
-      $temp = explode(":",$volume);
-      $testPath = strtolower($temp[1]);
-    
+      $temp = explode(":",(string)$volume);
+      if ( count($temp) < 2 ) continue;
       # a /config mount, or any host path inside the appdata share on ANY pool/disk
-      # (the canonicalizer collapses /mnt/<pool>/ and /mnt/diskN/ to the /mnt/user view)
-      if ( appdataCleanupNgIsConfigTarget($testPath) || appdataCleanupNgPathWithinAppdata($temp[0]) ) {
+      # (container targets are case-sensitive, so the target is passed through unchanged)
+      if ( appdataCleanupNgIsConfigTarget($temp[1]) || appdataCleanupNgPathWithinAppdata($temp[0]) ) {
         $path = $temp[0];
         break;
       }
@@ -119,7 +113,7 @@ function appdataCleanupNgIsConfigTarget($target) {
   # reject control characters and traversal on the raw value, then allow only /config[/...]
   $raw = (string)$target;
   if ( appdataCleanupNgHasControlChars($raw) || preg_match('#(^|/)\.\.?(/|$)#',$raw) ) return false;
-  $t = rtrim(strtolower(trim($raw)),"/");
+  $t = rtrim(trim($raw),"/");
   return (bool)preg_match('#^/config(/|$)#',$t);
 }
 
