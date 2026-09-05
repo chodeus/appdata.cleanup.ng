@@ -82,9 +82,10 @@ reviews:
           the .plg version or md5 differs from what was built. The version
           comes from --version (the release workflow owns numbering); never
           reintroduce date or archive-glob versioning here.
-        - copy_to_git.sh has no set -e and its `find . -exec rm` of ._* files
-          runs from the CURRENT directory, not the destination — flag any
-          change that widens that or drops the -name "._*" filter.
+        - copy_to_git.sh copies the live plugin dir and deletes ._* files under
+          it. Flag only changes that WIDEN the delete scope, drop the -name
+          "._*" filter, or write to a predictable shared path; tightening it
+          (private destination, scoping find to the copy, set -euo) is correct.
     - path: "**"
       instructions: |-
         Applies to every file, whatever the language:
