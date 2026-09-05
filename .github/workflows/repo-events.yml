@@ -16,6 +16,8 @@ on:
 
 jobs:
   notify:
+    # The reusable needs no API access; an empty grant stops repo defaults widening it.
+    permissions: {}
     uses: chodeus/chodeus-ops/.github/workflows/repo-events.yml@af17d8ce986da0b92cbdfc84d2170e199e34a3fb # main
     secrets:
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}

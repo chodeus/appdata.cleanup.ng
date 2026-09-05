@@ -363,8 +363,12 @@ function appdataCleanupNgBuildDiagnostics() {
 function appdataCleanupNgSizeCacheFile() {
   $dir = "/var/tmp/appdata.cleanup.ng";
   if ( ! file_exists($dir) ) @mkdir($dir,0700,true);
+  # /var/tmp is world-writable, so another user can win the race to create this directory.
+  # Anything we do not own, or that is a symlink, means no cache at all rather than a root write.
   if ( ! is_dir($dir) || is_link($dir) ) return "";
-  @chmod($dir,0700);
+  clearstatcache(true,$dir);
+  if ( @fileowner($dir) !== 0 ) return "";
+  if ( (@fileperms($dir) & 0777) !== 0700 && @chmod($dir,0700) !== true ) return "";
   return $dir."/sizecache.json";
 }
 
@@ -385,10 +389,18 @@ function appdataCleanupNgFolderSizeBytes($path) {
   $out = array(); $rc = 1;
   @exec("du -sb ".escapeshellarg($real)." 2>/dev/null",$out,$rc);
   $bytes = ( $rc === 0 && ! empty($out) ) ? (int)strtok(trim($out[0]),"\t ") : -1;
-  if ( $bytes >= 0 && $cacheFile !== "" && ! is_link($cacheFile) ) {
+  if ( $bytes >= 0 && $cacheFile !== "" ) {
     $cache[$real] = array((int)$mtime,$bytes);
-    @file_put_contents($cacheFile,json_encode($cache),LOCK_EX);
-    @chmod($cacheFile,0600);
+    # Write a fresh private file and rename over the target: rename replaces a planted
+    # symlink instead of writing through it, so there is no check-then-write window.
+    $tmp = $cacheFile.".".getmypid().".tmp";
+    $fh = @fopen($tmp,"x");
+    if ( $fh !== false ) {
+      @fwrite($fh,json_encode($cache));
+      @fclose($fh);
+      @chmod($tmp,0600);
+      if ( ! @rename($tmp,$cacheFile) ) @unlink($tmp);
+    }
   }
   return $bytes;
 }
