@@ -44,7 +44,10 @@ reviews:
         emhttp plugin PHP (no Composer/autoloader; raw includes; Unraid runtime globals like DockerClient, getPost, my_parse_ini_file, addBannerWarning are provided at runtime — do NOT flag them as undefined).
         - Validate and sanitize every $_POST/$_GET/getPost input before use; reject bad input before normalization, not after.
         - No shelling out (exec/shell_exec/system/passthru) with an unsanitized path or user string — escapeshellarg validated values only.
-        - CSRF: every state-changing action must verify the Unraid csrf_token.
+        - CSRF is enforced by Unraid itself: auto_prepend_file runs local_prepend.php,
+          which hash_equals-checks csrf_token on every POST and unsets it before plugin
+          code runs. Flag anything that BYPASSES that (a GET that mutates state, reading
+          $_REQUEST, a non-emhttp entry point) — do not ask endpoints to re-verify it.
         - Redact secrets on every read/export/diagnostics path, not just the primary config read; make redaction structural so a new secret field is covered automatically.
     - path: "source/**/*.page"
       instructions: |
