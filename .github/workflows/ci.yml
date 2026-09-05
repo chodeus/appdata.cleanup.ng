@@ -28,6 +28,9 @@ jobs:
           done < <(find source -name '*.php')
           exit $status
 
+      - name: Every plugin function called is defined
+        run: php .github/scripts/check-plugin-functions.php source
+
       - name: Validate plugin manifest (XML)
         run: xmllint --noout plugins/appdata.cleanup.ng.plg
 

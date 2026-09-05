@@ -1,0 +1,81 @@
+<?php
+# Fails when a plugin function is called but never defined. php -l cannot see this, so a
+# rename that misses a call site would otherwise ship as a fatal on that code path.
+$root = $argv[1] ?? "source";
+$prefix = strtolower("appdataCleanupNg");
+$defined = $called = array();
+
+$it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root));
+foreach ($it as $file) {
+    if (!$file->isFile() || !preg_match('/\.(php|page)$/', $file->getFilename())) continue;
+    $tokens = @token_get_all(file_get_contents($file->getPathname()));
+    if (!is_array($tokens)) continue;
+
+    // index of the previous and next meaningful tokens, skipping whitespace and comments
+    $meaningful = array();
+    foreach ($tokens as $i => $t) {
+        if (is_array($t) && in_array($t[0], array(T_WHITESPACE, T_COMMENT, T_DOC_COMMENT), true)) continue;
+        $meaningful[] = $i;
+    }
+
+    // brace depth per token, and the depths at which a class/interface/trait body sits, so a
+    // method declaration is never recorded as a global function
+    $inClassAt = array(); $classDepths = array(); $depth = 0; $pendingClass = false;
+    $classKeywords = array(T_CLASS, T_INTERFACE, T_TRAIT);
+    if (defined('T_ENUM')) $classKeywords[] = T_ENUM;
+    $prevSig = null;
+    foreach ($tokens as $i => $t) {
+        // record membership as it stands AT this token; the set is mutated as scopes close
+        $inClassAt[$i] = !empty($classDepths);
+        if (is_array($t)) {
+            if (in_array($t[0], array(T_WHITESPACE, T_COMMENT, T_DOC_COMMENT), true)) continue;
+            // Foo::class is a constant, not a declaration
+            $afterDoubleColon = is_array($prevSig) && $prevSig[0] === T_DOUBLE_COLON;
+            if (in_array($t[0], $classKeywords, true) && !$afterDoubleColon) $pendingClass = true;
+            elseif (in_array($t[0], array(T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES), true)) $depth++;
+            $prevSig = $t;
+            continue;
+        }
+        $prevSig = $t;
+        if ($t === "{") {
+            $depth++;
+            if ($pendingClass) { $classDepths[$depth] = true; $pendingClass = false; }
+        } elseif ($t === "}") {
+            unset($classDepths[$depth]);
+            $depth--;
+        }
+    }
+
+    foreach ($meaningful as $n => $i) {
+        $t = $tokens[$i];
+        if (!is_array($t)) continue;
+        $isName = $t[0] === T_STRING
+            || (defined('T_NAME_FULLY_QUALIFIED') && $t[0] === T_NAME_FULLY_QUALIFIED);
+        if (!$isName) continue;
+        // PHP function names are case-insensitive; compare and key on a normalised form
+        $name = strtolower(ltrim($t[1], "\\"));
+        if (strpos($name, $prefix) !== 0) continue;
+        $prev = $n > 0 ? $tokens[$meaningful[$n - 1]] : null;
+        $next = isset($meaningful[$n + 1]) ? $tokens[$meaningful[$n + 1]] : null;
+
+        // function &name() returns by reference; & is a literal before 8.1 and a token after,
+        // so match on its text rather than on the token id
+        if ((is_array($prev) ? $prev[1] : $prev) === "&" && $n > 1) $prev = $tokens[$meaningful[$n - 2]];
+        if (is_array($prev) && $prev[0] === T_FUNCTION) {
+            // only a top-level declaration defines a global function
+            if (!$inClassAt[$i]) $defined[$name] = true;
+            continue;
+        }
+        // a method call ($x->n(), $x?->n(), Cls::n()) is not one of ours
+        $methodOps = array(T_OBJECT_OPERATOR, T_DOUBLE_COLON);
+        if (defined('T_NULLSAFE_OBJECT_OPERATOR')) $methodOps[] = T_NULLSAFE_OBJECT_OPERATOR;
+        if (is_array($prev) && in_array($prev[0], $methodOps, true)) continue;
+        if ($next === "(") $called[$name] = true;
+    }
+}
+$missing = array_diff(array_keys($called), array_keys($defined));
+if ($missing) {
+    fwrite(STDERR, "called but not defined: " . implode(", ", $missing) . "\n");
+    exit(1);
+}
+printf("%d plugin functions defined, %d called, all resolve\n", count($defined), count($called));

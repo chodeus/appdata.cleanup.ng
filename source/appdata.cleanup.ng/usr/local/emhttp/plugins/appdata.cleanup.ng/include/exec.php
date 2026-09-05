@@ -21,7 +21,7 @@ case 'getOrphanAppdata':
     $DockerClient = new DockerClient();
     $info = $DockerClient->getDockerContainers();
     # getDockerContainers() returns [] for BOTH "no containers" and an API failure; disambiguate before trusting it
-    if ( empty($info) ) $dockerHealthy = appdataCleanupNgDockerEngineReachable($DockerClient);
+    if ( empty($info) ) $dockerHealthy = appdataCleanupNgContainerListTrustworthy($DockerClient);
   } else {
     $info = array();
   }
@@ -39,24 +39,29 @@ case 'getOrphanAppdata':
 	foreach ( $all_files as $xmlfile) {
 		$o = readXmlFile($xmlfile);
 		if ( !$o ) continue;
-		if ( ! is_array($o['Config']) ) continue;
+		if ( ! isset($o['Config']) || ! is_array($o['Config']) ) continue;
+		# one <Config> arrives as a record rather than a list (same normalisation as appdataCleanupNgStaleTemplates)
+		$configs = isset($o['Config'][0]) ? $o['Config'] : array($o['Config']);
 
-		foreach ($o['Config'] as $volumeArray) {
+		foreach ($configs as $volumeArray) {
 			if ( ! isset($volumeArray['@attributes']) ) {
 				continue;
 			}
-			if ( $volumeArray['@attributes']['Type'] !== "Path" )
+			if ( ($volumeArray['@attributes']['Type'] ?? "") !== "Path" )
 				continue;
-			$tplSeg = appdataCleanupNgOwnerSegment($volumeArray['value']);
+			$hostDir = (string)($volumeArray['value'] ?? "");
+			$target  = (string)($volumeArray['@attributes']['Target'] ?? "");
+			if ( $hostDir === "" || $target === "" ) continue;
+			$tplSeg = appdataCleanupNgOwnerSegment($hostDir);
 			if ( $tplSeg !== "" ) $templateSegs[$tplSeg] = true;
-			$volumeList[0] = $volumeArray['value'].":".$volumeArray['@attributes']['Target'];
+			$volumeList[0] = $hostDir.":".$target;
 			if ( findAppdata($volumeList) ) {
-				$temp['Name'] = $o['Name'];
-				$temp['HostDir'] = $volumeArray['value'];
-				$availableVolumes[$volumeArray['value']] = $temp;
+				$temp['Name'] = $o['Name'] ?? "";
+				$temp['HostDir'] = $hostDir;
+				$availableVolumes[$hostDir] = $temp;
 				# an app's OWN appdata is its /config mount
-				if ( strpos(strtolower((string)$volumeArray['@attributes']['Target']),"/config") === 0 ) {
-					$seg = appdataCleanupNgOwnerSegment($volumeArray['value']);
+				if ( appdataCleanupNgIsConfigTarget($target) ) {
+					$seg = appdataCleanupNgOwnerSegment($hostDir);
 					if ( $seg !== "" && ! isset($ownedBy[$seg]) ) $ownedBy[$seg] = $o['Name'];
 				}
 			}
@@ -79,7 +84,7 @@ case 'getOrphanAppdata':
   foreach ($availableVolumes as $key => $volume) {
     $cand = appdataCleanupNgCanon($volume['HostDir']);
     foreach ($inUseBy as $u => $unused) {
-      if ( $cand === $u || strpos($u."/",$cand."/") === 0 ) {
+      if ( appdataCleanupNgPathUnder($u,$cand) ) {
         unset($availableVolumes[$key]);
         break;
       }
@@ -133,9 +138,7 @@ case 'getOrphanAppdata':
   if ( ! empty($composeProtected) ) {
     $composeSet = array_flip($composeProtected);
     foreach ( $availableVolumes as $key => $volume ) {
-      $u = str_replace("/mnt/cache/","/mnt/user/",$volume['HostDir']);
-      $c = str_replace("/mnt/user/","/mnt/cache/",$volume['HostDir']);
-      if ( isset($composeSet[$volume['HostDir']]) || isset($composeSet[$u]) || isset($composeSet[$c]) ) {
+      if ( appdataCleanupNgCoveredBy(appdataCleanupNgCanon($volume['HostDir']),$composeSet) ) {
         unset($availableVolumes[$key]);
       }
     }
@@ -160,7 +163,7 @@ case 'getOrphanAppdata':
     foreach ( appdataCleanupNgAppdataRoots() as $r ) {
       $rc = appdataCleanupNgCanon($r);
       foreach ( $inUseBy as $u => $unused ) {
-        if ( $u === $rc || strpos($rc."/",$u."/") === 0 ) { $rootMounted = true; break 2; }
+        if ( appdataCleanupNgPathUnder($rc,$u) ) { $rootMounted = true; break 2; }
       }
     }
     if ( $composeUncertain ) {
@@ -230,7 +233,7 @@ case 'getOrphanAppdata':
       $mountedBy = array();   # container name -> parent-mount set that reaches this folder
       $cand = appdataCleanupNgCanon($volume['HostDir']);
       foreach ($inUseBy as $u => $containers) {
-        if ( $u !== $cand && strpos($cand."/",$u."/") === 0 ) {
+        if ( $u !== $cand && appdataCleanupNgPathUnder($cand,$u) ) {
           foreach ($containers as $n => $paths) $mountedBy[$n] = isset($mountedBy[$n]) ? $mountedBy[$n] + $paths : $paths;
         }
       }
@@ -292,16 +295,43 @@ case "deleteAppdata":
     echo "docker not running"; break;
   }
   $dcDel = new DockerClient();
-  if ( empty($dcDel->getDockerContainers()) && ! appdataCleanupNgDockerEngineReachable($dcDel) ) {
+  $liveDel = $dcDel->getDockerContainers();
+  if ( empty($liveDel) && ! appdataCleanupNgContainerListTrustworthy($dcDel) ) {
     appdataCleanupNgLog("deleteAppdata refused: docker engine unreachable (can't confirm orphan status)",LOG_WARNING);
     echo "docker unreachable"; break;
+  }
+  # The scan that produced these paths is a snapshot; a container can start before the user
+  # confirms. Re-check against the live mounts and the compose set instead of trusting it.
+  $inUseNow = appdataCleanupNgInUsePaths($liveDel);
+  $composeNow = array();
+  $composeUncertainDel = false;
+  foreach ( appdataCleanupNgComposeReferencedPaths($composeUncertainDel) as $cp ) $composeNow[$cp] = true;
+  # fail closed: an unreadable compose file or an unresolved ${VAR} host path means the
+  # protected set is incomplete, so we cannot prove a stopped stack is not being deleted
+  if ( $composeUncertainDel ) {
+    appdataCleanupNgLog("deleteAppdata refused: compose protection incomplete (unreadable file or unresolved variable)",LOG_WARNING);
+    echo "refused: compose protection is incomplete, so a stopped stack cannot be ruled out";
+    break;
   }
   $refused = array();
   foreach ($paths as $path) {
     $path = (string)$path;
-    if ( $path === "" ) continue;
+    if ( $path === "" ) { $refused[] = "(empty path)"; continue; }
     if ( ! appdataCleanupNgPathWithinAppdata($path) ) {
       $refused[] = $path." (outside appdata)";
+      continue;
+    }
+    $canon = appdataCleanupNgCanon($path);
+    if ( appdataCleanupNgCoveredBy($canon,$composeNow) ) {
+      $refused[] = $path." (claimed by a compose stack)";
+      continue;
+    }
+    $live = false;
+    foreach ( $inUseNow as $u => $unused ) {
+      if ( appdataCleanupNgPathUnder($u,$canon) ) { $live = true; break; }
+    }
+    if ( $live ) {
+      $refused[] = $path." (in use by a running container)";
       continue;
     }
     # ZFS dataset: must be destroyed, never rm -rf (which empties a mounted dataset)
@@ -345,10 +375,16 @@ case "deleteAppdata":
       $refused[] = $path." (resolves outside appdata or across a mount)";
       continue;
     }
-    exec ("rm -rf ".escapeshellarg($real));
+    $rmOut = array(); $rmRc = 1;
+    exec("rm -rf ".escapeshellarg($real)." 2>&1",$rmOut,$rmRc);
+    if ( $rmRc !== 0 || @file_exists($real) ) {
+      $refused[] = $path." (delete failed)";
+    }
   }
   if ( ! empty($refused) ) {
     appdataCleanupNgLog("refused/failed delete: ".implode(", ",$refused),LOG_WARNING);
+    echo "refused ".count($refused)." of ".count($paths).": ".implode("; ",$refused);
+    break;
   }
   echo "deleted";
   break;
@@ -377,7 +413,7 @@ case "deleteTemplates":
   }
   $dc = new DockerClient();
   $info = $dc->getDockerContainers();
-  if ( empty($info) && ! appdataCleanupNgDockerEngineReachable($dc) ) {
+  if ( empty($info) && ! appdataCleanupNgContainerListTrustworthy($dc) ) {
     appdataCleanupNgLog("deleteTemplates refused: docker engine unreachable (can't confirm staleness)",LOG_WARNING);
     echo "docker unreachable"; break;
   }
@@ -385,13 +421,15 @@ case "deleteTemplates":
   foreach ( (array)$info as $c ) if ( ! empty($c['Name']) ) $installedNames[] = $c['Name'];
   $staleFiles = array();
   foreach ( appdataCleanupNgStaleTemplates($installedNames) as $t ) $staleFiles[$t['file']] = true;
-  $n = 0; $refused = 0;
+  $n = 0; $refusedTpl = array();
   foreach ( $files as $f ) {
     $f = (string)$f;
-    if ( ! isset($staleFiles[$f]) ) { $refused++; continue; }   # not a currently-stale template -> refuse
+    if ( ! isset($staleFiles[$f]) ) { $refusedTpl[] = basename($f)." (not currently stale)"; continue; }
     if ( appdataCleanupNgDeleteTemplate($f) ) $n++;
+    else $refusedTpl[] = basename($f)." (delete failed)";
   }
-  appdataCleanupNgLog("deleted ".$n." stale template(s)".($refused ? ", refused ".$refused." non-stale" : ""),LOG_INFO);
+  appdataCleanupNgLog("deleted ".$n." stale template(s)".( $refusedTpl ? ", refused: ".implode(", ",$refusedTpl) : "" ),LOG_INFO);
+  if ( ! empty($refusedTpl) ) { echo "refused ".count($refusedTpl)." of ".count($files).": ".implode("; ",$refusedTpl); break; }
   echo "deleted ".$n;
   break;
 

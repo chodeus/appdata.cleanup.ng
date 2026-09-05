@@ -32,21 +32,13 @@ if ( ! function_exists("my_parse_ini_string") ) {
 
 function findAppdata($volumes) {
   $path = false;
-  $dockerOptions = @my_parse_ini_file("/boot/config/docker.cfg");
-  $defaultShareName = basename($dockerOptions['DOCKER_APP_CONFIG_PATH']);
-  $shareName = str_replace("/mnt/user/","",$defaultShareName);
-  $shareName = str_replace("/mnt/cache/","",$defaultShareName);
-  if ( ! is_file("/boot/config/shares/$shareName.cfg") ) { 
-    $shareName = "****";
-  }
   if ( is_array($volumes) ) {
     foreach ($volumes as $volume) {
-      $temp = explode(":",$volume);
-      $testPath = strtolower($temp[1]);
-    
+      $temp = explode(":",(string)$volume);
+      if ( count($temp) < 2 ) continue;
       # a /config mount, or any host path inside the appdata share on ANY pool/disk
-      # (the canonicalizer collapses /mnt/<pool>/ and /mnt/diskN/ to the /mnt/user view)
-      if ( startsWith($testPath,"/config") || appdataCleanupNgPathWithinAppdata($temp[0]) ) {
+      # (container targets are case-sensitive, so the target is passed through unchanged)
+      if ( appdataCleanupNgIsConfigTarget($temp[1]) || appdataCleanupNgPathWithinAppdata($temp[0]) ) {
         $path = $temp[0];
         break;
       }
@@ -65,30 +57,83 @@ function findAppdata($volumes) {
 # getDockerContainers() returns [] for BOTH "no containers" and an API failure; probe /version to distinguish them.
 # returns true when an empty container list can be trusted as genuinely empty (engine reachable), false when the
 # engine is unreachable. On older Unraid whose DockerClient lacks getDockerJSON, assume reachable (legacy behaviour).
-function appdataCleanupNgDockerEngineReachable($dc) {
-  if ( ! is_object($dc) || ! method_exists($dc,"getDockerJSON") ) return true;
-  $code = 0; $ver = $dc->getDockerJSON("/version","GET",$code);
-  return ( is_array($ver) && ! empty($ver) );
+# getDockerContainers() returns [] for both "no containers" and a failed list, so probe the
+# list endpoint itself: an empty in-use set is only trustworthy when the request succeeded.
+function appdataCleanupNgContainerListTrustworthy($dc) {
+  # unverifiable means untrusted: an empty list would otherwise look like "no containers"
+  if ( ! is_object($dc) || ! method_exists($dc,"getDockerJSON") ) return false;
+  # the by-ref flag is true on success and an error STRING on failure, so compare strictly
+  $ok = null; $list = @$dc->getDockerJSON("/containers/json?all=1","GET",$ok);
+  return ( $ok === true && is_array($list) );
+}
+
+# One definition of path containment; callers state the direction.
+# true when $inner is $outer itself or sits underneath it.
+function appdataCleanupNgPathUnder($inner,$outer) {
+  return ( $inner === $outer || strpos($inner."/",$outer."/") === 0 );
+}
+
+# true when $path is at or below any key of $roots
+function appdataCleanupNgCoveredBy($path,$roots) {
+  foreach ( $roots as $r => $unused ) if ( appdataCleanupNgPathUnder($path,$r) ) return true;
+  return false;
+}
+
+# Canonical host path -> true for every path any container currently mounts.
+function appdataCleanupNgInUsePaths($containers) {
+  $inUse = array();
+  foreach ( (array)$containers as $ct ) {
+    if ( empty($ct['Volumes']) || ! is_array($ct['Volumes']) ) continue;
+    foreach ( $ct['Volumes'] as $volume ) {
+      $host = explode(":",(string)$volume);
+      $c = appdataCleanupNgCanon($host[0]);
+      if ( $c !== "" && $c !== "/" ) $inUse[$c] = true;
+    }
+  }
+  return $inUse;
 }
 
 # appdata share root(s) from docker.cfg; deletions are confined within these as a backstop against a crafted request escaping appdata
+# "/config" or "/config/..." only: a bare prefix test also matches /config2 and /config-backup.
+# One definition of "unsafe for a path": control characters including DEL. Four call sites
+# previously carried two different sets, which is how they drift apart.
+function appdataCleanupNgHasControlChars($s) {
+  return (bool)preg_match('/[\x00-\x1f\x7f]/',(string)$s);
+}
+
+function appdataCleanupNgIsConfigTarget($target) {
+  # allowlist /config[/...] after rejecting control characters and traversal on the raw value
+  $raw = (string)$target;
+  if ( appdataCleanupNgHasControlChars($raw) || preg_match('#(^|/)\.\.?(/|$)#',$raw) ) return false;
+  $t = rtrim(trim($raw),"/");
+  return (bool)preg_match('#^/config(/|$)#',$t);
+}
+
 function appdataCleanupNgAppdataRoots() {
   $dockerOptions = @my_parse_ini_file("/boot/config/docker.cfg");
-  $cfgPath = isset($dockerOptions['DOCKER_APP_CONFIG_PATH']) ? $dockerOptions['DOCKER_APP_CONFIG_PATH'] : "/mnt/user/appdata/";
-  $cfgPath = rtrim(preg_replace('#/+#','/',trim((string)$cfgPath)),"/");
-  if ( $cfgPath === "" ) $cfgPath = "/mnt/user/appdata";
-  $share = basename($cfgPath);
-  if ( $share === "" ) $share = "appdata";
-  $roots = array($cfgPath,"/mnt/user/$share","/mnt/cache/$share");
+  $raw = isset($dockerOptions['DOCKER_APP_CONFIG_PATH']) ? (string)$dockerOptions['DOCKER_APP_CONFIG_PATH'] : "/mnt/user/appdata/";
+  # check the RAW value: trim() strips NUL and other control bytes before we could see them
+  $bad = appdataCleanupNgHasControlChars($raw);
+  $cfgPath = rtrim(preg_replace('#/+#','/',trim($raw)),"/");
+  # the value must be an absolute /mnt/<pool>/<path> with no traversal, else use the default
+  if ( $bad || preg_match('#(^|/)\.\.?(/|$)#',$cfgPath) || ! preg_match('#^/mnt/([^/]+)/(.+)$#',$cfgPath,$m) ) {
+    $cfgPath = "/mnt/user/appdata";
+    preg_match('#^/mnt/([^/]+)/(.+)$#',$cfgPath,$m);
+  }
+  # aliases swap the POOL component only; splicing basename() would point at a different share
+  $tail = $m[2];
+  $roots = array($cfgPath,"/mnt/user/".$tail,"/mnt/cache/".$tail);
   $roots = array_values(array_unique(array_filter($roots,"strlen")));
-  # safety floor: a confinement root must be at least /mnt/<pool>/<share>; never "/", "/mnt", or a bare pool root
-  # (a misconfigured DOCKER_APP_CONFIG_PATH like "/mnt/user" must not turn the whole share tree into a delete root)
+  # floor: a confinement root is never "/", "/mnt" or a bare pool root
   $roots = array_values(array_filter($roots,function($r){ return preg_match('#^/mnt/[^/]+/[^/]+#',$r); }));
   return $roots;
 }
 
 function appdataCleanupNgPathWithinAppdata($path) {
-  if ( preg_match('/[\x00-\x1f]/',(string)$path) ) return false;   # reject control chars / embedded newlines before any normalization
+  # reject control characters and traversal on the raw value: normalization must not get the
+  # chance to rewrite a traversal into something that looks like a valid appdata path
+  if ( appdataCleanupNgHasControlChars($path) ) return false;
+  if ( preg_match('#(^|/)\.\.(/|$)#',(string)$path) ) return false;
   $p = appdataCleanupNgCanon($path);
   if ( $p === "" || $p[0] !== "/" ) return false;
   if ( strpos("/".$p."/","/../") !== false ) return false; # reject traversal
@@ -102,9 +147,13 @@ function appdataCleanupNgPathWithinAppdata($path) {
 
 function appdataCleanupNgCanon($path) {
   $p = rtrim(preg_replace('#/+#','/',trim((string)$path)),"/");
+  # drop "." segments so /mnt/user/./appdata compares equal to /mnt/user/appdata.
+  # ".." is deliberately NOT resolved here: traversal is rejected by the callers instead.
+  while ( strpos($p,"/./") !== false ) $p = str_replace("/./","/",$p);
+  $p = preg_replace('#/\.$#','',$p);
   # collapse any pool/array-disk mount to its /mnt/user view so the same folder compares equal regardless of pool; skip mounts that are genuinely not the user share
   if ( preg_match('#^/mnt/([^/]+)(/.*)?$#',$p,$m) ) {
-    $skip = array("user","user0","disks","remotes","rootsharecache","addons");
+    $skip = array("user","user0","disks","remotes","rootsharecache","addons",".","..");
     if ( ! in_array($m[1],$skip,true) ) {
       $p = "/mnt/user".(isset($m[2]) ? $m[2] : "");
     }
@@ -127,21 +176,22 @@ function appdataCleanupNgOwnerSegment($path) {
 # a folder that is an exact ZFS dataset mountpoint needs `zfs destroy`, not rm -rf (which would empty a still-mounted dataset); a non-dataset mountpoint is refused outright
 function appdataCleanupNgZfsAvailable() {
   static $a = null;
-  if ( $a !== null ) return $a;
+  if ( $a === true ) return true;
   $o = array(); $rc = 1;
   @exec("command -v zfs 2>/dev/null",$o,$rc);
-  $a = ( $rc === 0 );
-  return $a;
+  if ( $rc !== 0 ) return false;
+  $a = true;
+  return true;
 }
 
 function appdataCleanupNgZfsDatasetMap() {
   static $map = null;
   if ( $map !== null ) return $map;
-  $map = array();
-  if ( ! appdataCleanupNgZfsAvailable() ) return $map;
+  if ( ! appdataCleanupNgZfsAvailable() ) return array();
   $out = array(); $rc = 1;
   @exec("zfs list -H -o name,mountpoint -t filesystem 2>/dev/null",$out,$rc);
-  if ( $rc !== 0 ) return $map;
+  if ( $rc !== 0 ) return array();
+  $map = array();
   foreach ( $out as $line ) {
     $parts = preg_split('/\t+/',rtrim($line,"\n"));
     if ( count($parts) < 2 ) continue;
@@ -287,7 +337,7 @@ function appdataCleanupNgStaleTemplates($installedNames) {
         if ( ! is_array($v) || ! isset($v['@attributes']) || ( $v['@attributes']['Type'] ?? '' ) !== "Path" ) continue;
         $s = appdataCleanupNgOwnerSegment($v['value'] ?? '');
         if ( $s === "" ) continue;
-        if ( strpos(strtolower((string)($v['@attributes']['Target'] ?? '')),"/config") === 0 ) { $seg = $s; $appdata = $v['value']; break; }
+        if ( appdataCleanupNgIsConfigTarget($v['@attributes']['Target'] ?? '') ) { $seg = $s; $appdata = $v['value']; break; }
         if ( $seg === "" ) { $seg = $s; $appdata = $v['value']; }
       }
     }
@@ -418,9 +468,15 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
   $roots = appdataCleanupNgAppdataRoots();
   if ( empty($roots) ) return array();
 
+  # tolerate redundant separators and "." segments in a bind path; a literal root match would
+  # miss them and leave the folder silently unprotected
+  $sep = "/+(?:\\./+)*";
   $escaped = array();
-  foreach ( $roots as $r ) $escaped[] = preg_quote($r,"#");
-  $pattern = "#(".implode("|",$escaped).")/([^\\s:'\"\\\\]+)#";
+  foreach ( $roots as $r ) {
+    $parts = array_map(function($seg) { return preg_quote($seg,"#"); },explode("/",trim($r,"/")));
+    $escaped[] = $sep.implode($sep,$parts);
+  }
+  $pattern = "#(".implode("|",$escaped).")".$sep."([^\\s:'\"\\\\]+)#";
 
   $protected = array();
   foreach ( (array)glob($projectsDir."/*",GLOB_ONLYDIR) as $proj ) {
@@ -456,14 +512,28 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
         || preg_match('#^[ \t]*source[ \t]*:[ \t]*["\']?[^\n]*\$[A-Za-z_{]#m',$contents) ) {
         $uncertain = true;
       }
+      # A bind host we cannot trust never matches the root pattern below, so it would be
+      # silently unprotected. Check every bind host up front with the shared predicates.
+      if ( preg_match_all('#^[ \t]*(?:-|source[ \t]*:)[ \t]*["\']?(/[^\n:"\']*)#m',$contents,$hosts,PREG_SET_ORDER) ) {
+        foreach ( $hosts as $h ) {
+          $host = rtrim($h[1],"/");
+          if ( appdataCleanupNgHasControlChars($host) || preg_match('#(^|/)\.\.(/|$)#',$host) ) {
+            $uncertain = true;
+            break;
+          }
+        }
+      }
       if ( preg_match_all($pattern,$contents,$matches,PREG_SET_ORDER) ) {
         foreach ( $matches as $hit ) {
+          # belt and braces: the pre-check above already marked such a file uncertain
+          if ( appdataCleanupNgHasControlChars($hit[2]) || preg_match('#(^|/)\.\.(/|$)#',$hit[2]) ) {
+            $uncertain = true;
+            continue;
+          }
           $firstSeg = strtok($hit[2],"/");         # appdata folder name under the root
           if ( $firstSeg === false || $firstSeg === "" ) continue;
           $full = $hit[1]."/".$firstSeg;
-          $protected[str_replace("/mnt/cache/","/mnt/user/",$full)] = true;
-          $protected[str_replace("/mnt/user/","/mnt/cache/",$full)] = true;
-          $protected[$full] = true;
+          $protected[appdataCleanupNgCanon($full)] = true;
         }
       }
       # fail-safe: host root is an unresolved ${var}/$var but its next segment names an existing appdata folder, so protect it conservatively
@@ -473,9 +543,7 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
           foreach ( $roots as $r ) {
             $cand = $r."/".$seg;
             if ( @is_dir($cand) ) {
-              $protected[str_replace("/mnt/cache/","/mnt/user/",$cand)] = true;
-              $protected[str_replace("/mnt/user/","/mnt/cache/",$cand)] = true;
-              $protected[$cand] = true;
+              $protected[appdataCleanupNgCanon($cand)] = true;
             }
           }
         }
