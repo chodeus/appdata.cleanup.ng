@@ -21,14 +21,21 @@ foreach ($it as $file) {
 
     foreach ($meaningful as $n => $i) {
         $t = $tokens[$i];
-        if (!is_array($t) || $t[0] !== T_STRING || strpos($t[1], $prefix) !== 0) continue;
+        if (!is_array($t)) continue;
+        $isName = $t[0] === T_STRING
+            || (defined('T_NAME_FULLY_QUALIFIED') && $t[0] === T_NAME_FULLY_QUALIFIED);
+        if (!$isName) continue;
+        $name = ltrim($t[1], "\\");            // \appdataCleanupNgX is the same function
+        if (strpos($name, $prefix) !== 0) continue;
         $prev = $n > 0 ? $tokens[$meaningful[$n - 1]] : null;
         $next = isset($meaningful[$n + 1]) ? $tokens[$meaningful[$n + 1]] : null;
 
-        if (is_array($prev) && $prev[0] === T_FUNCTION) { $defined[$t[1]] = true; continue; }
-        // a method call ($x->name(), Cls::name()) is not one of ours
-        if (is_array($prev) && in_array($prev[0], array(T_OBJECT_OPERATOR, T_DOUBLE_COLON), true)) continue;
-        if ($next === "(") $called[$t[1]] = true;
+        if (is_array($prev) && $prev[0] === T_FUNCTION) { $defined[$name] = true; continue; }
+        // a method call ($x->n(), $x?->n(), Cls::n()) is not one of ours
+        $methodOps = array(T_OBJECT_OPERATOR, T_DOUBLE_COLON);
+        if (defined('T_NULLSAFE_OBJECT_OPERATOR')) $methodOps[] = T_NULLSAFE_OBJECT_OPERATOR;
+        if (is_array($prev) && in_array($prev[0], $methodOps, true)) continue;
+        if ($next === "(") $called[$name] = true;
     }
 }
 $missing = array_diff(array_keys($called), array_keys($defined));

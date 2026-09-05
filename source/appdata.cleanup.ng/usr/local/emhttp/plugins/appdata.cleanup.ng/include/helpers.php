@@ -520,6 +520,12 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
         || preg_match('#^[ \t]*source[ \t]*:[ \t]*["\']?[^\n]*\$[A-Za-z_{]#m',$contents) ) {
         $uncertain = true;
       }
+      # a bind host containing ".." never matches the root pattern below, so it would be
+      # silently unprotected; scoped to bind positions like the check above
+      if ( preg_match('#^[ \t]*-[ \t]*["\']?/[^\n:=]*(?:^|/)\.\.(?:/[^\n:]*)?:/#m',$contents)
+        || preg_match('#^[ \t]*source[ \t]*:[ \t]*["\']?/[^\n]*(?:/\.\.(?:/|$|["\'\s]))#m',$contents) ) {
+        $uncertain = true;
+      }
       if ( preg_match_all($pattern,$contents,$matches,PREG_SET_ORDER) ) {
         foreach ( $matches as $hit ) {
           # a bind we cannot resolve (traversal, control chars) would protect the wrong folder:
