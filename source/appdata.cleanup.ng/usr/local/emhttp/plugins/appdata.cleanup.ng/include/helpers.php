@@ -120,7 +120,11 @@ function appdataCleanupNgAppdataRoots() {
   $dockerOptions = @my_parse_ini_file("/boot/config/docker.cfg");
   $cfgPath = isset($dockerOptions['DOCKER_APP_CONFIG_PATH']) ? $dockerOptions['DOCKER_APP_CONFIG_PATH'] : "/mnt/user/appdata/";
   $cfgPath = rtrim(preg_replace('#/+#','/',trim((string)$cfgPath)),"/");
-  if ( $cfgPath === "" ) $cfgPath = "/mnt/user/appdata";
+  # a control character or a traversal segment makes the configured root unusable: fall back to
+  # the documented default rather than deriving roots that silently match nothing
+  if ( $cfgPath === "" || preg_match('/[\x00-\x1f\x7f]/',$cfgPath) || preg_match('#(^|/)\.\.?(/|$)#',$cfgPath) ) {
+    $cfgPath = "/mnt/user/appdata";
+  }
   $share = basename($cfgPath);
   if ( $share === "" ) $share = "appdata";
   $roots = array($cfgPath,"/mnt/user/$share","/mnt/cache/$share");
@@ -146,6 +150,10 @@ function appdataCleanupNgPathWithinAppdata($path) {
 
 function appdataCleanupNgCanon($path) {
   $p = rtrim(preg_replace('#/+#','/',trim((string)$path)),"/");
+  # drop "." segments so /mnt/user/./appdata compares equal to /mnt/user/appdata.
+  # ".." is deliberately NOT resolved here: traversal is rejected by the callers instead.
+  while ( strpos($p,"/./") !== false ) $p = str_replace("/./","/",$p);
+  $p = preg_replace('#/\.$#','',$p);
   # collapse any pool/array-disk mount to its /mnt/user view so the same folder compares equal regardless of pool; skip mounts that are genuinely not the user share
   if ( preg_match('#^/mnt/([^/]+)(/.*)?$#',$p,$m) ) {
     $skip = array("user","user0","disks","remotes","rootsharecache","addons");
@@ -463,9 +471,16 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
   $roots = appdataCleanupNgAppdataRoots();
   if ( empty($roots) ) return array();
 
+  # A bind may be written with redundant separators ("/mnt/user//appdata/x") or "." segments
+  # ("/mnt/user/./appdata/x"). Matching the root literally would miss those and, worse, leave
+  # uncertain false, so the folder would look unprotected. Tolerate them in the separator.
+  $sep = "/+(?:\\./+)*";
   $escaped = array();
-  foreach ( $roots as $r ) $escaped[] = preg_quote($r,"#");
-  $pattern = "#(".implode("|",$escaped).")/([^\\s:'\"\\\\]+)#";
+  foreach ( $roots as $r ) {
+    $parts = array_map(function($seg) { return preg_quote($seg,"#"); },explode("/",trim($r,"/")));
+    $escaped[] = $sep.implode($sep,$parts);
+  }
+  $pattern = "#(".implode("|",$escaped).")".$sep."([^\\s:'\"\\\\]+)#";
 
   $protected = array();
   foreach ( (array)glob($projectsDir."/*",GLOB_ONLYDIR) as $proj ) {
