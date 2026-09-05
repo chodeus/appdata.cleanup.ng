@@ -116,31 +116,29 @@ function appdataCleanupNgHasControlChars($s) {
 }
 
 function appdataCleanupNgIsConfigTarget($target) {
+  # reject control characters and traversal on the raw value, then allow only /config[/...]
   $raw = (string)$target;
-  if ( appdataCleanupNgHasControlChars($raw) ) return false;
+  if ( appdataCleanupNgHasControlChars($raw) || preg_match('#(^|/)\.\.?(/|$)#',$raw) ) return false;
   $t = rtrim(strtolower(trim($raw)),"/");
-  return ( $t === "/config" || strpos($t,"/config/") === 0 );
+  return (bool)preg_match('#^/config(/|$)#',$t);
 }
 
 function appdataCleanupNgAppdataRoots() {
   $dockerOptions = @my_parse_ini_file("/boot/config/docker.cfg");
-  $cfgPath = isset($dockerOptions['DOCKER_APP_CONFIG_PATH']) ? $dockerOptions['DOCKER_APP_CONFIG_PATH'] : "/mnt/user/appdata/";
-  $cfgPath = rtrim(preg_replace('#/+#','/',trim((string)$cfgPath)),"/");
-  # The configured value must itself be an absolute /mnt/<pool>/<share> path. Anything else
-  # ("foo", "/mnt/user", "/etc/passwd") would have its basename spliced into /mnt/user/<x>,
-  # making an unrelated share deletable. Fall back to the documented default instead.
-  if ( $cfgPath === ""
-    || appdataCleanupNgHasControlChars($cfgPath)
-    || preg_match('#(^|/)\.\.?(/|$)#',$cfgPath)
-    || ! preg_match('#^/mnt/[^/]+/[^/]+#',$cfgPath) ) {
+  $raw = isset($dockerOptions['DOCKER_APP_CONFIG_PATH']) ? (string)$dockerOptions['DOCKER_APP_CONFIG_PATH'] : "/mnt/user/appdata/";
+  # check the RAW value: trim() strips NUL and other control bytes before we could see them
+  $bad = appdataCleanupNgHasControlChars($raw);
+  $cfgPath = rtrim(preg_replace('#/+#','/',trim($raw)),"/");
+  # the value must be an absolute /mnt/<pool>/<path> with no traversal, else use the default
+  if ( $bad || preg_match('#(^|/)\.\.?(/|$)#',$cfgPath) || ! preg_match('#^/mnt/([^/]+)/(.+)$#',$cfgPath,$m) ) {
     $cfgPath = "/mnt/user/appdata";
+    preg_match('#^/mnt/([^/]+)/(.+)$#',$cfgPath,$m);
   }
-  $share = basename($cfgPath);
-  if ( $share === "" ) $share = "appdata";
-  $roots = array($cfgPath,"/mnt/user/$share","/mnt/cache/$share");
+  # aliases swap the POOL component only; splicing basename() would point at a different share
+  $tail = $m[2];
+  $roots = array($cfgPath,"/mnt/user/".$tail,"/mnt/cache/".$tail);
   $roots = array_values(array_unique(array_filter($roots,"strlen")));
-  # safety floor: a confinement root must be at least /mnt/<pool>/<share>; never "/", "/mnt", or a bare pool root
-  # (a misconfigured DOCKER_APP_CONFIG_PATH like "/mnt/user" must not turn the whole share tree into a delete root)
+  # floor: a confinement root is never "/", "/mnt" or a bare pool root
   $roots = array_values(array_filter($roots,function($r){ return preg_match('#^/mnt/[^/]+/[^/]+#',$r); }));
   return $roots;
 }
