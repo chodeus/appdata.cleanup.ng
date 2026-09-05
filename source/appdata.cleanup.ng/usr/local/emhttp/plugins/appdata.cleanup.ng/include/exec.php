@@ -39,24 +39,27 @@ case 'getOrphanAppdata':
 	foreach ( $all_files as $xmlfile) {
 		$o = readXmlFile($xmlfile);
 		if ( !$o ) continue;
-		if ( ! is_array($o['Config']) ) continue;
+		if ( ! isset($o['Config']) || ! is_array($o['Config']) ) continue;
 
 		foreach ($o['Config'] as $volumeArray) {
 			if ( ! isset($volumeArray['@attributes']) ) {
 				continue;
 			}
-			if ( $volumeArray['@attributes']['Type'] !== "Path" )
+			if ( ($volumeArray['@attributes']['Type'] ?? "") !== "Path" )
 				continue;
-			$tplSeg = appdataCleanupNgOwnerSegment($volumeArray['value']);
+			$hostDir = (string)($volumeArray['value'] ?? "");
+			$target  = (string)($volumeArray['@attributes']['Target'] ?? "");
+			if ( $hostDir === "" ) continue;
+			$tplSeg = appdataCleanupNgOwnerSegment($hostDir);
 			if ( $tplSeg !== "" ) $templateSegs[$tplSeg] = true;
-			$volumeList[0] = $volumeArray['value'].":".$volumeArray['@attributes']['Target'];
+			$volumeList[0] = $hostDir.":".$target;
 			if ( findAppdata($volumeList) ) {
-				$temp['Name'] = $o['Name'];
-				$temp['HostDir'] = $volumeArray['value'];
-				$availableVolumes[$volumeArray['value']] = $temp;
+				$temp['Name'] = $o['Name'] ?? "";
+				$temp['HostDir'] = $hostDir;
+				$availableVolumes[$hostDir] = $temp;
 				# an app's OWN appdata is its /config mount
-				if ( strpos(strtolower((string)$volumeArray['@attributes']['Target']),"/config") === 0 ) {
-					$seg = appdataCleanupNgOwnerSegment($volumeArray['value']);
+				if ( strpos(strtolower($target),"/config") === 0 ) {
+					$seg = appdataCleanupNgOwnerSegment($hostDir);
 					if ( $seg !== "" && ! isset($ownedBy[$seg]) ) $ownedBy[$seg] = $o['Name'];
 				}
 			}
@@ -133,9 +136,7 @@ case 'getOrphanAppdata':
   if ( ! empty($composeProtected) ) {
     $composeSet = array_flip($composeProtected);
     foreach ( $availableVolumes as $key => $volume ) {
-      $u = str_replace("/mnt/cache/","/mnt/user/",$volume['HostDir']);
-      $c = str_replace("/mnt/user/","/mnt/cache/",$volume['HostDir']);
-      if ( isset($composeSet[$volume['HostDir']]) || isset($composeSet[$u]) || isset($composeSet[$c]) ) {
+      if ( isset($composeSet[appdataCleanupNgCanon($volume['HostDir'])]) ) {
         unset($availableVolumes[$key]);
       }
     }
@@ -349,6 +350,8 @@ case "deleteAppdata":
   }
   if ( ! empty($refused) ) {
     appdataCleanupNgLog("refused/failed delete: ".implode(", ",$refused),LOG_WARNING);
+    echo "refused ".count($refused)." of ".count($paths).": ".implode("; ",$refused);
+    break;
   }
   echo "deleted";
   break;

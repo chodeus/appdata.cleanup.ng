@@ -32,10 +32,8 @@ if ( ! function_exists("my_parse_ini_string") ) {
 
 function findAppdata($volumes) {
   $path = false;
-  $dockerOptions = @my_parse_ini_file("/boot/config/docker.cfg");
-  $defaultShareName = basename($dockerOptions['DOCKER_APP_CONFIG_PATH']);
-  $shareName = str_replace("/mnt/user/","",$defaultShareName);
-  $shareName = str_replace("/mnt/cache/","",$defaultShareName);
+  $dockerOptions = (array)@my_parse_ini_file("/boot/config/docker.cfg");
+  $shareName = basename((string)($dockerOptions['DOCKER_APP_CONFIG_PATH'] ?? ""));
   if ( ! is_file("/boot/config/shares/$shareName.cfg") ) { 
     $shareName = "****";
   }
@@ -135,21 +133,22 @@ function appdataCleanupNgOwnerSegment($path) {
 # a folder that is an exact ZFS dataset mountpoint needs `zfs destroy`, not rm -rf (which would empty a still-mounted dataset); a non-dataset mountpoint is refused outright
 function appdataCleanupNgZfsAvailable() {
   static $a = null;
-  if ( $a !== null ) return $a;
+  if ( $a === true ) return true;
   $o = array(); $rc = 1;
   @exec("command -v zfs 2>/dev/null",$o,$rc);
-  $a = ( $rc === 0 );
-  return $a;
+  if ( $rc !== 0 ) return false;
+  $a = true;
+  return true;
 }
 
 function appdataCleanupNgZfsDatasetMap() {
   static $map = null;
   if ( $map !== null ) return $map;
-  $map = array();
-  if ( ! appdataCleanupNgZfsAvailable() ) return $map;
+  if ( ! appdataCleanupNgZfsAvailable() ) return array();
   $out = array(); $rc = 1;
   @exec("zfs list -H -o name,mountpoint -t filesystem 2>/dev/null",$out,$rc);
-  if ( $rc !== 0 ) return $map;
+  if ( $rc !== 0 ) return array();
+  $map = array();
   foreach ( $out as $line ) {
     $parts = preg_split('/\t+/',rtrim($line,"\n"));
     if ( count($parts) < 2 ) continue;
@@ -469,9 +468,7 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
           $firstSeg = strtok($hit[2],"/");         # appdata folder name under the root
           if ( $firstSeg === false || $firstSeg === "" ) continue;
           $full = $hit[1]."/".$firstSeg;
-          $protected[str_replace("/mnt/cache/","/mnt/user/",$full)] = true;
-          $protected[str_replace("/mnt/user/","/mnt/cache/",$full)] = true;
-          $protected[$full] = true;
+          $protected[appdataCleanupNgCanon($full)] = true;
         }
       }
       # fail-safe: host root is an unresolved ${var}/$var but its next segment names an existing appdata folder, so protect it conservatively
@@ -481,9 +478,7 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
           foreach ( $roots as $r ) {
             $cand = $r."/".$seg;
             if ( @is_dir($cand) ) {
-              $protected[str_replace("/mnt/cache/","/mnt/user/",$cand)] = true;
-              $protected[str_replace("/mnt/user/","/mnt/cache/",$cand)] = true;
-              $protected[$cand] = true;
+              $protected[appdataCleanupNgCanon($cand)] = true;
             }
           }
         }

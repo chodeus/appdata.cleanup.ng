@@ -247,10 +247,14 @@ function deleteAppdata() {
 	}, function() {
 		swal("<?tr("Deleting Folders")?>","<?tr("Depending upon the size of the folders, this may take a few minutes")?>","info");
 		$.post(caURL,{action:'deleteAppdata',paths:paths,zfs:($('#zfsEnable').is(':checked')?'yes':'no'),csrf_token:csrf_token},function(data) {
-			if (data) {
+			// the server answers "deleted" only when every path was removed; anything else is a refusal
+			var reply = $.trim(String(data || ""));
+			if (reply === "deleted") {
 				swal("<?tr("Deleted")?>","","success");
-				loadAppdata();
+			} else {
+				swal("<?tr("Nothing was deleted")?>",reply || "<?tr("The server did not answer")?>","error");
 			}
+			loadAppdata();
 		});
 	});
 }
