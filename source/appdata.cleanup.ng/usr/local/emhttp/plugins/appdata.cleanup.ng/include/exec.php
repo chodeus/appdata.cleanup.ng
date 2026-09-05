@@ -367,7 +367,9 @@ case "deleteAppdata":
     $rmOut = array(); $rmRc = 1;
     exec("rm -rf ".escapeshellarg($real)." 2>&1",$rmOut,$rmRc);
     if ( $rmRc !== 0 || @file_exists($real) ) {
-      $refused[] = $path." (delete failed)";
+      # rm names the blocker (busy, permission); one clean line, since it can echo hostile file names
+      $why = substr(preg_replace('/[\x00-\x1f\x7f]+/'," ",trim(implode(" ",$rmOut))),0,200);
+      $refused[] = $path." (delete failed".( $why !== "" ? ": ".$why : "" ).")";
     }
   }
   if ( ! empty($refused) ) {
