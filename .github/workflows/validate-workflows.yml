@@ -26,7 +26,7 @@ jobs:
         id: install
         shell: bash
         run: |
-          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash)
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/914e7df21a07ef503a81201c76d2b11c789d3fca/scripts/download-actionlint.bash)
           echo "exe=$PWD/actionlint" >> "$GITHUB_OUTPUT"
 
       - name: Run actionlint
