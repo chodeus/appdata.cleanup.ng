@@ -21,7 +21,7 @@ case 'getOrphanAppdata':
     $DockerClient = new DockerClient();
     $info = $DockerClient->getDockerContainers();
     # getDockerContainers() returns [] for BOTH "no containers" and an API failure; disambiguate before trusting it
-    if ( empty($info) ) $dockerHealthy = appdataCleanupNgDockerEngineReachable($DockerClient);
+    if ( empty($info) ) $dockerHealthy = appdataCleanupNgContainerListTrustworthy($DockerClient);
   } else {
     $info = array();
   }
@@ -39,25 +39,30 @@ case 'getOrphanAppdata':
 	foreach ( $all_files as $xmlfile) {
 		$o = readXmlFile($xmlfile);
 		if ( !$o ) continue;
-		if ( ! is_array($o['Config']) ) continue;
+		if ( ! isset($o['Config']) || ! is_array($o['Config']) ) continue;
+		# one <Config> arrives as a record rather than a list (same normalisation as appdataCleanupNgStaleTemplates)
+		$configs = isset($o['Config'][0]) ? $o['Config'] : array($o['Config']);
 
-		foreach ($o['Config'] as $volumeArray) {
+		foreach ($configs as $volumeArray) {
 			if ( ! isset($volumeArray['@attributes']) ) {
 				continue;
 			}
-			if ( $volumeArray['@attributes']['Type'] !== "Path" )
+			if ( ($volumeArray['@attributes']['Type'] ?? "") !== "Path" )
 				continue;
-			$tplSeg = appdataCleanupNgOwnerSegment($volumeArray['value']);
+			$hostDir = (string)($volumeArray['value'] ?? "");
+			$target  = (string)($volumeArray['@attributes']['Target'] ?? "");
+			if ( $hostDir === "" || $target === "" ) continue;
+			$tplSeg = appdataCleanupNgOwnerSegment($hostDir);
 			if ( $tplSeg !== "" ) $templateSegs[$tplSeg] = true;
-			$volumeList[0] = $volumeArray['value'].":".$volumeArray['@attributes']['Target'];
+			$volumeList[0] = $hostDir.":".$target;
 			if ( findAppdata($volumeList) ) {
-				$temp['Name'] = $o['Name'];
-				$temp['HostDir'] = $volumeArray['value'];
-				$availableVolumes[$volumeArray['value']] = $temp;
+				$temp['Name'] = $o['Name'] ?? "";
+				$temp['HostDir'] = $hostDir;
+				$availableVolumes[$hostDir] = $temp;
 				# an app's OWN appdata is its /config mount
-				if ( strpos(strtolower((string)$volumeArray['@attributes']['Target']),"/config") === 0 ) {
-					$seg = appdataCleanupNgOwnerSegment($volumeArray['value']);
-					if ( $seg !== "" && ! isset($ownedBy[$seg]) ) $ownedBy[$seg] = $o['Name'];
+				if ( appdataCleanupNgIsConfigTarget($target) ) {
+					$seg = appdataCleanupNgOwnerSegment($hostDir);
+					if ( $seg !== "" && ! isset($ownedBy[$seg]) ) $ownedBy[$seg] = $temp['Name'];
 				}
 			}
 		}
@@ -70,8 +75,8 @@ case 'getOrphanAppdata':
     if ( ! is_array($installedDocker['Volumes']) ) continue;
     foreach ($installedDocker['Volumes'] as $volume) {
       $host = explode(":",$volume);
-      $c = appdataCleanupNgCanon($host[0]);
-      if ( $c !== "" && $c !== "/" ) $inUseBy[$c][(string)$installedDocker['Name']][$host[0]] = true;
+      # a mount through a symlink also protects the link's target
+      foreach ( appdataCleanupNgPathViews($host[0]) as $c ) $inUseBy[$c][(string)$installedDocker['Name']][$host[0]] = true;
     }
   }
 
@@ -79,7 +84,7 @@ case 'getOrphanAppdata':
   foreach ($availableVolumes as $key => $volume) {
     $cand = appdataCleanupNgCanon($volume['HostDir']);
     foreach ($inUseBy as $u => $unused) {
-      if ( $cand === $u || strpos($u."/",$cand."/") === 0 ) {
+      if ( appdataCleanupNgPathUnder($u,$cand) ) {
         unset($availableVolumes[$key]);
         break;
       }
@@ -133,9 +138,7 @@ case 'getOrphanAppdata':
   if ( ! empty($composeProtected) ) {
     $composeSet = array_flip($composeProtected);
     foreach ( $availableVolumes as $key => $volume ) {
-      $u = str_replace("/mnt/cache/","/mnt/user/",$volume['HostDir']);
-      $c = str_replace("/mnt/user/","/mnt/cache/",$volume['HostDir']);
-      if ( isset($composeSet[$volume['HostDir']]) || isset($composeSet[$u]) || isset($composeSet[$c]) ) {
+      if ( appdataCleanupNgCoveredBy(appdataCleanupNgCanon($volume['HostDir']),$composeSet) ) {
         unset($availableVolumes[$key]);
       }
     }
@@ -160,7 +163,7 @@ case 'getOrphanAppdata':
     foreach ( appdataCleanupNgAppdataRoots() as $r ) {
       $rc = appdataCleanupNgCanon($r);
       foreach ( $inUseBy as $u => $unused ) {
-        if ( $u === $rc || strpos($rc."/",$u."/") === 0 ) { $rootMounted = true; break 2; }
+        if ( appdataCleanupNgPathUnder($rc,$u) ) { $rootMounted = true; break 2; }
       }
     }
     if ( $composeUncertain ) {
@@ -230,7 +233,7 @@ case 'getOrphanAppdata':
       $mountedBy = array();   # container name -> parent-mount set that reaches this folder
       $cand = appdataCleanupNgCanon($volume['HostDir']);
       foreach ($inUseBy as $u => $containers) {
-        if ( $u !== $cand && strpos($cand."/",$u."/") === 0 ) {
+        if ( $u !== $cand && appdataCleanupNgPathUnder($cand,$u) ) {
           foreach ($containers as $n => $paths) $mountedBy[$n] = isset($mountedBy[$n]) ? $mountedBy[$n] + $paths : $paths;
         }
       }
@@ -292,30 +295,59 @@ case "deleteAppdata":
     echo "docker not running"; break;
   }
   $dcDel = new DockerClient();
-  if ( empty($dcDel->getDockerContainers()) && ! appdataCleanupNgDockerEngineReachable($dcDel) ) {
+  $liveDel = $dcDel->getDockerContainers();
+  if ( empty($liveDel) && ! appdataCleanupNgContainerListTrustworthy($dcDel) ) {
     appdataCleanupNgLog("deleteAppdata refused: docker engine unreachable (can't confirm orphan status)",LOG_WARNING);
     echo "docker unreachable"; break;
+  }
+  # The scan that produced these paths is a snapshot; a container can start before the user
+  # confirms. Re-check against the live mounts and the compose set instead of trusting it.
+  $inUseNow = appdataCleanupNgInUsePaths($liveDel);
+  $composeNow = array();
+  $composeUncertainDel = false;
+  foreach ( appdataCleanupNgComposeReferencedPaths($composeUncertainDel) as $cp ) $composeNow[$cp] = true;
+  # fail closed: an unreadable compose file or an unresolved ${VAR} host path means the
+  # protected set is incomplete, so we cannot prove a stopped stack is not being deleted
+  if ( $composeUncertainDel ) {
+    appdataCleanupNgLog("deleteAppdata refused: compose protection incomplete (unreadable file or unresolved variable)",LOG_WARNING);
+    echo "refused: compose protection is incomplete, so a stopped stack cannot be ruled out";
+    break;
   }
   $refused = array();
   foreach ($paths as $path) {
     $path = (string)$path;
-    if ( $path === "" ) continue;
+    if ( $path === "" ) { $refused[] = "(empty path)"; continue; }
+    # a forged value must never reach syslog or the reply verbatim
+    if ( appdataCleanupNgHasControlChars($path) ) { $refused[] = "(invalid path)"; continue; }
     if ( ! appdataCleanupNgPathWithinAppdata($path) ) {
       $refused[] = $path." (outside appdata)";
       continue;
     }
+    # resolve symlinks BEFORE any protection check: a link inside appdata would otherwise pass the checks
+    # under its own name while rm/zfs acts on its target, so every guard below runs on $real
+    $real = @realpath(str_replace("/mnt/cache/","/mnt/user/",$path));
+    if ( $real === false ) {
+      $refused[] = $path." (not found)";
+      continue;
+    }
+    if ( ! appdataCleanupNgPathWithinAppdata($real) ) {
+      $refused[] = $path." (resolves outside appdata)";
+      continue;
+    }
+    # a container or stack may reference the link or its target, so both names are checked; containment is
+    # one-direction on purpose (as in the scan): a parent mount such as /mnt/user is badged there, not in-use
+    $claimed = false; $live = false;
+    foreach ( array_unique(array(appdataCleanupNgCanon($path),appdataCleanupNgCanon($real))) as $c ) {
+      if ( appdataCleanupNgCoveredBy($c,$composeNow) ) $claimed = true;
+      foreach ( $inUseNow as $u => $unused ) if ( appdataCleanupNgPathUnder($u,$c) ) $live = true;
+    }
+    if ( $claimed ) { $refused[] = $path." (claimed by a compose stack)"; continue; }
+    if ( $live )    { $refused[] = $path." (in use by an installed container)"; continue; }
     # ZFS dataset: must be destroyed, never rm -rf (which empties a mounted dataset)
-    $dataset = appdataCleanupNgResolveZfsDataset($path);
+    $dataset = appdataCleanupNgResolveZfsDataset($real);
     if ( $dataset !== "" ) {
       if ( ! $zfsEnabled ) {
         $refused[] = $path." (ZFS dataset; enable ZFS deletion)";
-        continue;
-      }
-      # re-confine the resolved physical target (mirror the rm branch at 304-312): a symlink in
-      # appdata whose target is an external ZFS dataset must NOT be zfs-destroyed
-      $realZ = @realpath(str_replace("/mnt/cache/","/mnt/user/",$path));
-      if ( $realZ === false || ! appdataCleanupNgPathWithinAppdata($realZ) ) {
-        $refused[] = $path." (ZFS dataset resolves outside appdata)";
         continue;
       }
       $r = appdataCleanupNgZfsDestroy($dataset);
@@ -328,27 +360,22 @@ case "deleteAppdata":
       continue;
     }
     # never rm -rf across a mount boundary that isn't a recognized dataset
-    if ( appdataCleanupNgIsMountPoint($path) ) {
+    if ( appdataCleanupNgIsMountPoint($real) ) {
       $refused[] = $path." (mount point, not a known dataset)";
       continue;
     }
-    $userPath = str_replace("/mnt/cache/","/mnt/user/",$path);
-    # resolve symlinks and re-confine the PHYSICAL target before deleting: the guards above run on the submitted
-    # string, but a symlinked path component would otherwise let rm -rf act outside appdata (verified: GNU rm
-    # follows an intermediate symlinked component and a trailing-slash leaf symlink). rm exactly what we validated.
-    $real = @realpath($userPath);
-    if ( $real === false ) {
-      $refused[] = $path." (not found)";
-      continue;
+    $rmOut = array(); $rmRc = 1;
+    exec("rm -rf ".escapeshellarg($real)." 2>&1",$rmOut,$rmRc);
+    if ( $rmRc !== 0 || @file_exists($real) ) {
+      # rm names the blocker (busy, permission); one clean line, since it can echo hostile file names
+      $why = substr(preg_replace('/[\x00-\x1f\x7f]+/'," ",trim(implode(" ",$rmOut))),0,200);
+      $refused[] = $path." (delete failed".( $why !== "" ? ": ".$why : "" ).")";
     }
-    if ( ! appdataCleanupNgPathWithinAppdata($real) || appdataCleanupNgIsMountPoint($real) ) {
-      $refused[] = $path." (resolves outside appdata or across a mount)";
-      continue;
-    }
-    exec ("rm -rf ".escapeshellarg($real));
   }
   if ( ! empty($refused) ) {
     appdataCleanupNgLog("refused/failed delete: ".implode(", ",$refused),LOG_WARNING);
+    echo "refused ".count($refused)." of ".count($paths).": ".implode("; ",$refused);
+    break;
   }
   echo "deleted";
   break;
@@ -377,7 +404,7 @@ case "deleteTemplates":
   }
   $dc = new DockerClient();
   $info = $dc->getDockerContainers();
-  if ( empty($info) && ! appdataCleanupNgDockerEngineReachable($dc) ) {
+  if ( empty($info) && ! appdataCleanupNgContainerListTrustworthy($dc) ) {
     appdataCleanupNgLog("deleteTemplates refused: docker engine unreachable (can't confirm staleness)",LOG_WARNING);
     echo "docker unreachable"; break;
   }
@@ -385,13 +412,16 @@ case "deleteTemplates":
   foreach ( (array)$info as $c ) if ( ! empty($c['Name']) ) $installedNames[] = $c['Name'];
   $staleFiles = array();
   foreach ( appdataCleanupNgStaleTemplates($installedNames) as $t ) $staleFiles[$t['file']] = true;
-  $n = 0; $refused = 0;
+  $n = 0; $refusedTpl = array();
   foreach ( $files as $f ) {
     $f = (string)$f;
-    if ( ! isset($staleFiles[$f]) ) { $refused++; continue; }   # not a currently-stale template -> refuse
+    if ( appdataCleanupNgHasControlChars($f) ) { $refusedTpl[] = "(invalid template path)"; continue; }
+    if ( ! isset($staleFiles[$f]) ) { $refusedTpl[] = basename($f)." (not currently stale)"; continue; }
     if ( appdataCleanupNgDeleteTemplate($f) ) $n++;
+    else $refusedTpl[] = basename($f)." (delete failed)";
   }
-  appdataCleanupNgLog("deleted ".$n." stale template(s)".($refused ? ", refused ".$refused." non-stale" : ""),LOG_INFO);
+  appdataCleanupNgLog("deleted ".$n." stale template(s)".( $refusedTpl ? ", refused: ".implode(", ",$refusedTpl) : "" ),LOG_INFO);
+  if ( ! empty($refusedTpl) ) { echo "refused ".count($refusedTpl)." of ".count($files).": ".implode("; ",$refusedTpl); break; }
   echo "deleted ".$n;
   break;
 
