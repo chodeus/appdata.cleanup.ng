@@ -399,13 +399,24 @@ function appdataCleanupNgBuildDiagnostics() {
   return implode("\n",$out)."\n";
 }
 
-# du -sb, cached in tmpfs keyed by mtime so repeat scans don't re-walk unchanged folders
+# Cache lives under /var/lib, whose root-owned 0755 parent no other user can write: the entry
+# cannot be pre-created or swapped for a symlink between the checks and the root write.
+function appdataCleanupNgSizeCacheFile() {
+  $dir = "/var/lib/appdata.cleanup.ng";
+  if ( ! file_exists($dir) ) @mkdir($dir,0700);
+  clearstatcache(true,$dir);
+  # anything unexpected means no cache at all; never chmod a path that failed validation
+  if ( ! is_dir($dir) || is_link($dir) || @fileowner($dir) !== 0 || (@fileperms($dir) & 0777) !== 0700 ) return "";
+  return $dir."/sizecache.json";
+}
+
+# du -sb, cached keyed by mtime so repeat scans don't re-walk unchanged folders
 function appdataCleanupNgFolderSizeBytes($path) {
   $real = @realpath($path);
   if ( $real === false || ! is_dir($real) ) return -1;
-  $cacheFile = "/var/tmp/appdata.cleanup.ng.sizecache.json";
+  $cacheFile = appdataCleanupNgSizeCacheFile();
   $cache = array();
-  if ( is_file($cacheFile) ) {
+  if ( $cacheFile !== "" && is_file($cacheFile) && ! is_link($cacheFile) ) {
     $decoded = @json_decode(@file_get_contents($cacheFile),true);
     if ( is_array($decoded) ) $cache = $decoded;
   }
@@ -416,10 +427,17 @@ function appdataCleanupNgFolderSizeBytes($path) {
   $out = array(); $rc = 1;
   @exec("du -sb ".escapeshellarg($real)." 2>/dev/null",$out,$rc);
   $bytes = ( $rc === 0 && ! empty($out) ) ? (int)strtok(trim($out[0]),"\t ") : -1;
-  if ( $bytes >= 0 ) {
+  if ( $bytes >= 0 && $cacheFile !== "" ) {
     $cache[$real] = array((int)$mtime,$bytes);
-    @file_put_contents($cacheFile,json_encode($cache),LOCK_EX);
-    @chmod($cacheFile,0600);   # size cache is display-only; keep it root-owned/private in world-writable /var/tmp
+    # Write a fresh private file and rename over the target: rename replaces a planted
+    # symlink instead of writing through it, so there is no check-then-write window.
+    $tmp = $cacheFile.".".getmypid().".tmp";
+    $json = json_encode($cache);
+    $fh = ( $json !== false ) ? @fopen($tmp,"x") : false;
+    $ok = ( $fh !== false ) && ( @fwrite($fh,$json) === strlen($json) );
+    if ( $fh !== false ) $ok = ( @fclose($fh) && $ok );
+    # rename only a complete 0600 file; on any failure the existing cache stays as it was
+    if ( ! $ok || ! @chmod($tmp,0600) || ! @rename($tmp,$cacheFile) ) @unlink($tmp);
   }
   return $bytes;
 }
