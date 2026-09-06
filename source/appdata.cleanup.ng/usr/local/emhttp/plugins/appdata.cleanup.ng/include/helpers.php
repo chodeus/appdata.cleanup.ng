@@ -399,17 +399,14 @@ function appdataCleanupNgBuildDiagnostics() {
   return implode("\n",$out)."\n";
 }
 
-# Cache lives in a root-owned 0700 directory: /var/tmp itself is world-writable, so a
-# predictable filename there is symlink-attackable by any local process.
+# Cache lives under /var/lib, whose root-owned 0755 parent no other user can write: the entry
+# cannot be pre-created or swapped for a symlink between the checks and the root write.
 function appdataCleanupNgSizeCacheFile() {
-  $dir = "/var/tmp/appdata.cleanup.ng";
-  if ( ! file_exists($dir) ) @mkdir($dir,0700,true);
-  # /var/tmp is world-writable, so another user can win the race to create this directory.
-  # Anything we do not own, or that is a symlink, means no cache at all rather than a root write.
-  if ( ! is_dir($dir) || is_link($dir) ) return "";
+  $dir = "/var/lib/appdata.cleanup.ng";
+  if ( ! file_exists($dir) ) @mkdir($dir,0700);
   clearstatcache(true,$dir);
-  if ( @fileowner($dir) !== 0 ) return "";
-  if ( (@fileperms($dir) & 0777) !== 0700 && @chmod($dir,0700) !== true ) return "";
+  # anything unexpected means no cache at all; never chmod a path that failed validation
+  if ( ! is_dir($dir) || is_link($dir) || @fileowner($dir) !== 0 || (@fileperms($dir) & 0777) !== 0700 ) return "";
   return $dir."/sizecache.json";
 }
 
