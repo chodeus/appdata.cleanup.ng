@@ -6,13 +6,13 @@ PLUGIN="appdata.cleanup.ng"
 if [[ "$(uname)" == "Darwin" ]]; then
     SED_I=(sed -i'')
     MD5CMD() { md5 -q "$1"; }
-    CP_TREE() { rsync -aR --files-from=<(find . -type f ! -iname "pkg_build.sh") . "$1/"; }
+    CP_TREE() { rsync -aR --from0 --files-from=<(find . -type f ! -iname "pkg_build.sh" -print0) . "$1/"; }
     # stamp root:root into the archive (can't chown to root unprivileged on macOS)
     MAKE_TAR() { COPYFILE_DISABLE=1 tar --uid 0 --gid 0 --uname root --gname root -cJf "$1" -- *; }
 else
     SED_I=(sed -i)
     MD5CMD() { md5sum "$1" | awk '{print $1}'; }
-    CP_TREE() { cp --parents -f $(find . -type f ! -iname "pkg_build.sh") "$1/"; }
+    CP_TREE() { find . -type f ! -iname "pkg_build.sh" -exec cp --parents -f -t "$1/" {} +; }
     MAKE_TAR() { tar --owner=0 --group=0 --no-xattrs -cJf "$1" -- *; }
 fi
 

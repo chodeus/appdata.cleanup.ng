@@ -5,11 +5,8 @@ on:
     - cron: '0 5 * * *'  # daily
   workflow_dispatch:
 
-# The reusable stale-issues.yml requests issues:/pull-requests: write.
-# This repo's default GITHUB_TOKEN is read-only, and a reusable workflow
-# cannot exceed the caller's grant — without this block the run fails at
-# startup. Granting them here keeps the fix least-privilege (vs flipping
-# the repo-wide default to write).
+# Required: a reusable workflow cannot exceed the caller's grant, and this
+# repo's default token is read-only, so without these the run fails at startup.
 permissions:
   issues: write
   pull-requests: write
