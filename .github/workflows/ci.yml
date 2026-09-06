@@ -41,7 +41,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: chodeus/chodeus-ops
-          ref: f35f1f8b3e78542fc99e8c2b075a7685b3f5b9b9 # main
+          ref: c7105215e46ad278814e8e89ba8fd50813567039 # main
           path: .ops
           sparse-checkout: scripts
 
