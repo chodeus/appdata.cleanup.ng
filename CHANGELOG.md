@@ -2,6 +2,17 @@
 
 ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING
 
+## Unreleased
+
+- When a folder can't be deleted, the message now says which folders were refused and why
+- Deletion is re-checked when you confirm: a folder a container has started using, or one that belongs to a Compose stack, is refused
+- A folder that is a link to another folder can no longer be used to delete something the plugin protects
+- Compose stacks on a custom pool are recognised; their folders were previously offered for deletion
+- The "Appdata location" on the page is now the one the plugin actually uses
+- Fixed a security hole where the folder-size cache could be abused to overwrite other files on your server
+- The package build no longer drops files with spaces in their names
+- The credits panel's support link now points at this project
+
 ## 2026.07.09
 
 - "In use by mount" badge now shows which containers reach the folder and via which mounts
