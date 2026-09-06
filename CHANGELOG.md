@@ -2,7 +2,7 @@
 
 ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING
 
-## Unreleased
+## 2026.09.06
 
 - When a folder can't be deleted, the message now says which folders were refused and why
 - Deletion is re-checked when you confirm: a folder a container has started using, or one that belongs to a Compose stack, is refused
