@@ -14,7 +14,6 @@ reviews:
     drafts: false
   # main is the default (and only) branch — always auto-reviewed; no base_branches needed.
   path_filters:
-    - "!archive/**"      # built .txz release packages
     - "!screenshot/**"   # PNG screenshots
     - "!**/*.txz"        # plugin packages
     - "!**/*.png"        # bundled icons / screenshots
