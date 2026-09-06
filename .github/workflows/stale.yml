@@ -13,4 +13,4 @@ permissions:
 
 jobs:
   stale:
-    uses: chodeus/chodeus-ops/.github/workflows/stale-issues.yml@af17d8ce986da0b92cbdfc84d2170e199e34a3fb # main
+    uses: chodeus/chodeus-ops/.github/workflows/stale-issues.yml@f35f1f8b3e78542fc99e8c2b075a7685b3f5b9b9 # main
