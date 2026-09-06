@@ -432,13 +432,12 @@ function appdataCleanupNgFolderSizeBytes($path) {
     # Write a fresh private file and rename over the target: rename replaces a planted
     # symlink instead of writing through it, so there is no check-then-write window.
     $tmp = $cacheFile.".".getmypid().".tmp";
-    $fh = @fopen($tmp,"x");
-    if ( $fh !== false ) {
-      @fwrite($fh,json_encode($cache));
-      @fclose($fh);
-      @chmod($tmp,0600);
-      if ( ! @rename($tmp,$cacheFile) ) @unlink($tmp);
-    }
+    $json = json_encode($cache);
+    $fh = ( $json !== false ) ? @fopen($tmp,"x") : false;
+    $ok = ( $fh !== false ) && ( @fwrite($fh,$json) === strlen($json) );
+    if ( $fh !== false ) $ok = ( @fclose($fh) && $ok );
+    # rename only a complete 0600 file; on any failure the existing cache stays as it was
+    if ( ! $ok || ! @chmod($tmp,0600) || ! @rename($tmp,$cacheFile) ) @unlink($tmp);
   }
   return $bytes;
 }
