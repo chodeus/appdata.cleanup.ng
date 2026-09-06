@@ -39,9 +39,9 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$version" ] || { echo "ERROR: --version is required (e.g. --version 0000.00.00 for a test build)"; exit 1; }
 [ "$branch" = "main" ] || { echo "ERROR: this plugin only publishes from main (got '$branch')"; exit 1; }
-filename="$OUT/$PLUGIN-$version-x86_64-1.txz"
-
 mkdir -p "$tmpdir" "$OUT"
+OUT=$(cd "$OUT" && pwd)  # tar runs from the temp dir, so a relative --out would land there
+filename="$OUT/$PLUGIN-$version-x86_64-1.txz"
 
 cd "$SRC"
 CP_TREE "$tmpdir"
