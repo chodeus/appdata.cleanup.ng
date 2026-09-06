@@ -2,6 +2,12 @@
 
 ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING
 
+## Unreleased
+
+- fix: report refused deletions instead of reporting success (#11)
+- fix: stop the size cache following a symlink planted in /var/tmp (#12)
+- fix: stage every source file when a filename contains whitespace (#13)
+
 ## 2026.07.09
 
 - "In use by mount" badge now shows which containers reach the folder and via which mounts
