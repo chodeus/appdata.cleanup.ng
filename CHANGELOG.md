@@ -2,6 +2,10 @@
 
 ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING
 
+## Unreleased
+
+- fix(pkg_build): resolve --out before building so a relative path works
+
 ## 2026.09.06
 
 - When a folder can't be deleted, the message now says which folders were refused and why
