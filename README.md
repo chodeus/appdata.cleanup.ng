@@ -63,3 +63,5 @@ issue is the most useful thing you can share.
 ---
 
 Original *CA Cleanup Appdata* © 2015–2024 Andrew Zawadzki (Squid). Revived 2026 by chodeus.
+
+<!-- test-build pipeline check -->
