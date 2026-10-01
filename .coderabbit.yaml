@@ -44,16 +44,18 @@ reviews:
         - Validate and sanitize every $_POST/$_GET/getPost input before use; reject bad input before normalization, not after.
         - No shelling out (exec/shell_exec/system/passthru) with an unsanitized path or user string — escapeshellarg validated values only.
         - CSRF is enforced by Unraid itself: auto_prepend_file runs local_prepend.php,
-          which hash_equals-checks csrf_token on every POST and unsets it before plugin
-          code runs. Flag anything that BYPASSES that (a GET that mutates state, reading
-          $_REQUEST, a non-emhttp entry point) — do not ask endpoints to re-verify it.
+          which checks csrf_token on every POST and unsets it before plugin code runs.
+          The token must arrive as a POST field: the X-CSRF-Token header is only accepted
+          from Unraid 7.3.0, and this plugin supports 6.10. Flag anything that BYPASSES
+          the check (a GET that mutates state, reading $_REQUEST, a non-emhttp entry
+          point) — do not ask endpoints to re-verify it.
         - Redact secrets on every read/export/diagnostics path, not just the primary config read; make redaction structural so a new secret field is covered automatically.
     - path: "source/**/*.page"
       instructions: |
         The emhttp page — PHP + HTML + inline jQuery (the only frontend). JS-specific rules:
         - Delete must stay behind the explicit confirm dialog; the delete button defaults disabled and arms only on a real selection. Any change that fires a delete POST without confirmation is a blocker.
         - 0 is falsy in JS: for counters where 0 is legitimate (selected count, zfsCount) use Number.isFinite / explicit `=== 0` / `.length` checks, not `||` / bare truthiness. But a candidate deletion path is NOT legitimately empty — reject a blank/"" path (the server already does: `$path === ""` → skip); don't treat "" as a value to preserve.
-        - Every mutating $.post (deleteAppdata, deleteTemplates, ignorePath) must include csrf_token; never drop it.
+        - Every mutating $.post (deleteAppdata, deleteTemplates, ignorePath) sends csrf_token explicitly; never drop it. Unraid's global ajaxPrefilter adds it from 6.12 (earlier releases are unverified) and this plugin supports 6.10; the duplicate field on newer releases is harmless.
         - HTML-escape server/path values before interpolating them into the confirm dialog or DOM (paths are attacker-influenced folder names).
         - Never put a long-lived token in a URL (img src / EventSource / webhook); keep mutations as CSRF-protected POSTs.
     - path: "plugins/*.plg"
