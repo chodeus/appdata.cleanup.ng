@@ -2,6 +2,12 @@
 
 ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING
 
+## Unreleased
+
+- fix(pkg_build): resolve --out before building so a relative path works
+- fix(plg): install the package the manifest names, whatever its version (#21)
+- Test build per pull request via the test-build label (#17) (2777d19)
+
 ## 2026.09.06
 
 - When a folder can't be deleted, the message now says which folders were refused and why
