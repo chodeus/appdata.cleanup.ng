@@ -89,11 +89,13 @@ ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING
 <FILE Run="/bin/bash">
 <INLINE>
 # Remove old 'source' files
-rm -f $(ls /boot/config/plugins/&name;/&name;*.txz 2>/dev/null &#124; grep -vF '/boot/config/plugins/&name;/&name;-&version;-x86_64-1.txz')
+for archive in /boot/config/plugins/&name;/&name;*.txz; do
+  [ "$archive" = "/boot/config/plugins/&name;/&name;-&version;-x86_64-1.txz" ] &#124;&#124; rm -f -- "$archive"
+done
 </INLINE>
 </FILE>
 
-<!-- Without reinstall, upgradepkg skips a package whose name sorts below the installed one (a rollback, an older test build). -->
+<!-- reinstall: upgradepkg skips lower-sorting names -->
 <FILE Name="/boot/config/plugins/&name;/&name;-&version;-x86_64-1.txz" Run="upgradepkg --install-new --reinstall">
 <URL>https://github.com/&github;/releases/download/v&version;/&name;-&version;-x86_64-1.txz</URL>
 <MD5>&md5;</MD5>
