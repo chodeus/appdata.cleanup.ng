@@ -57,3 +57,17 @@ jobs:
         run: |
           bash pkg_build.sh --version 0000.00.00 --branch main
           test -f dist/appdata.cleanup.ng-0000.00.00-x86_64-1.txz
+
+  notify-failure:
+    needs: validate
+    if: failure() && github.event_name != 'pull_request'
+    permissions: {}
+    uses: chodeus/chodeus-ops/.github/workflows/notify-discord.yml@cbd544d21103cfe854c8e0ec717ee2be4f097ad7 # main
+    with:
+      event_type: build
+      status: failure
+      title: "❌ CI failed: ${{ github.ref_name }}"
+      description: Validation failed; see the run.
+      commit_sha: ${{ github.sha }}
+    secrets:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}

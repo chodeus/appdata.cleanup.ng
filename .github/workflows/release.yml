@@ -44,3 +44,17 @@ jobs:
       dry_run: ${{ inputs.dry_run || false }}
     secrets:
       RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+
+  notify-failure:
+    needs: release
+    if: failure()
+    permissions: {}
+    uses: chodeus/chodeus-ops/.github/workflows/notify-discord.yml@cbd544d21103cfe854c8e0ec717ee2be4f097ad7 # main
+    with:
+      event_type: build
+      status: failure
+      title: "❌ Plugin release failed: ${{ github.ref_name }}"
+      description: The release run failed; see the run for the step and whether anything was pushed.
+      commit_sha: ${{ github.sha }}
+    secrets:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
