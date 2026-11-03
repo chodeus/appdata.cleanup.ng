@@ -10,7 +10,7 @@
 <!ENTITY pluginURL "https://raw.githubusercontent.com/&github;/main/plugins/&name;.plg">
 ]>
 
-<PLUGIN name="&name;" author="&author;" version="&version;" min="6.10.0" launch="&launch;" pluginURL="&pluginURL;" icon="paint-brush" support="https://github.com/&github;">
+<PLUGIN name="&name;" author="&author;" version="&version;" min="6.10.0" launch="&launch;" pluginURL="&pluginURL;" icon="paint-brush" support="https://forums.unraid.net/topic/199565-plugin-appdata-cleanup-ng/">
 
 <CHANGES>
 

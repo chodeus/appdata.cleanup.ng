@@ -313,5 +313,5 @@ function captureDiagnostics() {
 	<a style='cursor:pointer;margin-left:auto' onclick='showCredits();'><?tr("Credits")?></a>
 </div>
 
-<center><?tr("For support for this plugin, visit here:")?> <a href="https://github.com/chodeus/appdata.cleanup.ng" target="_blank"><?tr("HERE")?></a></center>
+<center><?tr("For support for this plugin, visit here:")?> <a href="https://forums.unraid.net/topic/199565-plugin-appdata-cleanup-ng/" target="_blank"><?tr("HERE")?></a></center>
 <center><?tr("Plugin Version")?> <strong><span id='version'></span></strong></center>

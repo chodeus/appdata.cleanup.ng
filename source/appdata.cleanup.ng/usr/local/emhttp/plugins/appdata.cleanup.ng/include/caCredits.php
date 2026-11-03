@@ -17,7 +17,7 @@ $caCredits = "
     <br>
     <center><em><font size='1'>Original plugin Copyright 2015-2024 Andrew Zawadzki &middot; Revived 2026 by chodeus</font></em></center>
     <center><a href='https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=7M7CBCVU732XG' target='_blank'><img src='https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif'></a></center>
-    <br><center><a href='https://github.com/chodeus/appdata.cleanup.ng' target='_blank'>Plugin Support</a></center>
+    <br><center><a href='https://forums.unraid.net/topic/199565-plugin-appdata-cleanup-ng/' target='_blank'>Plugin Support</a></center>
   ";
 
   $caCredits = str_replace("\n","",$caCredits);
