@@ -68,6 +68,7 @@ file_put_contents($table, implode("\n", array(
   "39 25 0:33 / /mnt/disk1/appdata/arr/media rw - xfs /dev/md1 rw",
   "40 36 0:34 / /mnt/cache/appdata/application/x rw - zfs cache/appdata/application/x rw",
   "41 36 0:35 / /mnt/cache/appdata/my\\040app/cache rw - zfs cache/appdata/my_app/cache rw",
+  "42 36 0:36 / /mnt/cache/appdata/app\\040/db rw - zfs cache/other rw",
 )) . "\n");
 $mounts = array(
   "a nested dataset"            => array("/mnt/cache/appdata/app", array("/mnt/cache/appdata/app/db")),
@@ -75,6 +76,9 @@ $mounts = array(
   "a sibling with that prefix"  => array("/mnt/cache/appdata/app/db", array()),
   "an escaped space"            => array("/mnt/cache/appdata/my app", array("/mnt/cache/appdata/my app/cache")),
   "the pool above it"           => array("/mnt/cache/appdata/other", array()),
+  "a name ending in a space"    => array("/mnt/cache/appdata/app ", array("/mnt/cache/appdata/app /db")),
+  "through /mnt/user, the pool" => array("/mnt/user/appdata/app", array("/mnt/cache/appdata/app", "/mnt/cache/appdata/app/db")),
+  "a pool path, not the disk"   => array("/mnt/cache/appdata/arr", array()),
 );
 foreach ( $mounts as $name => $case ) {
   $got = appdataCleanupNgMountsInside($case[0], $table);
@@ -87,6 +91,22 @@ check("mounts inside, empty table", appdataCleanupNgMountsInside("/mnt/cache/app
 file_put_contents("$bin/short", "36 25 0:30 /\n");
 check("mounts inside, malformed row", appdataCleanupNgMountsInside("/mnt/cache/appdata/app", "$bin/short") === null);
 
+// The dataset a folder resolves to: its own mountpoint exactly, or through /mnt/user the only one at that folder
+putenv("FAKE_LIST=" . "cache/appdata/app\\t/mnt/cache/appdata/app\\nfast/appdata/app\\t/mnt/fast/appdata/app\\ncache/appdata/solo\\t/mnt/cache/appdata/solo\\n");
+putenv("FAKE_LIST_FAIL=0");
+$resolves = array(
+  "/mnt/cache/appdata/app"  => "cache/appdata/app",
+  "/mnt/fast/appdata/app"   => "fast/appdata/app",
+  "/mnt/cache/appdata/app " => "",
+  "/mnt/user/appdata/app"   => "",
+  "/mnt/user/appdata/solo"  => "cache/appdata/solo",
+  "/mnt/disk1/appdata/solo" => "",
+);
+foreach ( $resolves as $path => $dataset ) {
+  $got = appdataCleanupNgResolveZfsDataset($path);
+  check("dataset for '$path'", $got === $dataset, json_encode($got));
+}
+
 @unlink($log); @unlink($table); @unlink("$bin/empty"); @unlink("$bin/short"); @unlink("$bin/zfs"); @rmdir($bin);
 if ( $fail ) exit(1);
-echo "delete scope tests passed (" . (count($cases) + count($mounts) + 4) . " cases)\n";
+echo "delete scope tests passed (" . (count($cases) + count($mounts) + count($resolves) + 4) . " cases)\n";

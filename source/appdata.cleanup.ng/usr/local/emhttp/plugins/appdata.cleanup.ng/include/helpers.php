@@ -145,7 +145,17 @@ function appdataCleanupNgPathWithinAppdata($path) {
 }
 
 function appdataCleanupNgCanon($path) {
-  $p = rtrim(preg_replace('#/+#','/',trim((string)$path)),"/");
+  return appdataCleanupNgViewKey(trim((string)$path));
+}
+
+# a physical path, exactly as named: only repeated and trailing slashes go (names may end in a space)
+function appdataCleanupNgPhysical($path) {
+  return rtrim(preg_replace('#/+#','/',(string)$path),"/");
+}
+
+# the /mnt/user view of a path, without trimming it: one key for the same folder on any pool or disk
+function appdataCleanupNgViewKey($path) {
+  $p = appdataCleanupNgPhysical($path);
   # drop "." segments so /mnt/user/./appdata compares equal to /mnt/user/appdata.
   # ".." is deliberately NOT resolved here: traversal is rejected by the callers instead.
   while ( strpos($p,"/./") !== false ) $p = str_replace("/./","/",$p);
@@ -195,35 +205,45 @@ function appdataCleanupNgZfsDatasetMap() {
     $parts = preg_split('/\t+/',rtrim($line,"\n"));
     if ( count($parts) < 2 ) continue;
     $name = trim($parts[0]);
-    $mp = appdataCleanupNgCanon($parts[1]);
+    $mp = appdataCleanupNgPhysical($parts[1]);
     if ( $name !== "" && $mp !== "" && $mp[0] === "/" ) $map[$mp] = $name;
   }
   return $map;
 }
 
+# the dataset mounted exactly at this folder; through /mnt/user, the one mounted at it on any pool (none when two are)
 function appdataCleanupNgResolveZfsDataset($path) {
   $map = appdataCleanupNgZfsDatasetMap();
   if ( empty($map) ) return "";
-  $variants = array(appdataCleanupNgCanon($path));
+  $variants = array(appdataCleanupNgPhysical($path));
   $rp = @realpath($path);
-  if ( $rp !== false ) $variants[] = appdataCleanupNgCanon($rp);
+  if ( $rp !== false ) $variants[] = appdataCleanupNgPhysical($rp);
   foreach ( $variants as $v ) {
     if ( $v !== "" && isset($map[$v]) ) return $map[$v];
+  }
+  foreach ( $variants as $v ) {
+    if ( strpos($v,"/mnt/user/") !== 0 ) continue;   # a pool or disk path means that place only
+    $hits = array();
+    foreach ( $map as $mp => $name ) if ( appdataCleanupNgViewKey($mp) === $v ) $hits[] = $name;
+    if ( count($hits) === 1 ) return $hits[0];
   }
   return "";
 }
 
-# mount points strictly inside $dir in any of its views (pool, disk, /mnt/user); null when the mount table can't be read or parsed
+# filesystems a delete of $dir would reach: mounted inside it, and through /mnt/user also on any pool or disk at or
+# inside the same folder; null when the mount table can't be read or parsed
 function appdataCleanupNgMountsInside($dir,$mountinfo="/proc/self/mountinfo") {
   $lines = @file($mountinfo,FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES);
-  $d = appdataCleanupNgCanon($dir);
+  $d = appdataCleanupNgPhysical($dir);
   if ( ! $lines || $d === "" ) return null;
+  $viaUser = strpos($d,"/mnt/user/") === 0;
   $inside = array();
   foreach ( $lines as $line ) {
     $fields = explode(" ",$line);
     if ( count($fields) < 5 || $fields[4] === "" ) return null;
     $mp = preg_replace_callback('/\\\\([0-7]{3})/',function($m) { return chr(octdec($m[1])); },$fields[4]);
-    if ( strpos(appdataCleanupNgCanon($mp)."/",$d."/") === 0 && appdataCleanupNgCanon($mp) !== $d ) $inside[] = $mp;
+    $at = $viaUser ? appdataCleanupNgViewKey($mp) : appdataCleanupNgPhysical($mp);
+    if ( strpos($at."/",$d."/") === 0 && ( $at !== $d || ( $viaUser && $mp !== $d ) ) ) $inside[] = $mp;
   }
   return $inside;
 }
