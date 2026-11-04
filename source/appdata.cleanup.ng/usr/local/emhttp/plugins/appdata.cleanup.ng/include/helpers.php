@@ -699,28 +699,38 @@ function appdataCleanupNgComposeText($file,$env) {
   },$contents);
 }
 
+# a key whose value is a host path: a long-syntax bind's source, a named volume's device, a secret's or config's file
+function appdataCleanupNgComposeHostKey() {
+  return '["\']?(?:source|device|file)["\']?[ \t]*:';
+}
+
 # true when a compose file's binds can't all be known: an unresolved ${VAR} in a bind host (short "- ${VAR}/x:/y", where
 # [^\n:=] skips "KEY=val" items, or long "source: ${VAR}", also in one-line lists and maps), or an include or extends
 function appdataCleanupNgComposeTextUnreadable($contents) {
   return preg_match('#(?:^[ \t]*-|[\[,])[ \t]*["\']?[^\n:=,\]]*\$(?:\{[^}\n]*\}|[A-Za-z_])[^\n:]*:/#m',$contents)
-    || preg_match('#(?:^[ \t]*(?:-[ \t]*)?|[{,][ \t]*)source[ \t]*:[ \t]*["\']?[^\n,}]*\$[A-Za-z_{]#m',$contents)
+    || preg_match('#(?:^[ \t]*(?:-[ \t]*)?|[{,][ \t]*)'.appdataCleanupNgComposeHostKey().'[ \t]*["\']?[^\n,}]*\$[A-Za-z_{]#m',$contents)
     || preg_match('#^[ \t]*["\']?(?:include|extends)["\']?[ \t]*:#m',$contents);   # their files are not read here
 }
 
 # absolute bind hosts: "- /x:/y", "source: /x", also in one-line lists and maps; a quoted one may hold the other quote
 function appdataCleanupNgComposeAbsoluteHosts($contents) {
+  $key = appdataCleanupNgComposeHostKey();
   $hosts = array();
-  if ( preg_match_all('#(?:^[ \t]*(?:-[ \t]*(?:source[ \t]*:)?|source[ \t]*:)|[\[,][ \t]*|[{,][ \t]*source[ \t]*:)[ \t]*(?:"(/[^\n:"]*)|\'(/[^\n:\']*)|(/[^\n:"\',\]}]*))#m',$contents,$found,PREG_SET_ORDER) ) {
+  if ( preg_match_all('#(?:^[ \t]*(?:-[ \t]*(?:'.$key.')?|'.$key.')|[\[,][ \t]*|[{,][ \t]*'.$key.')[ \t]*(?:"(/[^\n:"]*)|\'(/[^\n:\']*)|(/[^\n:"\',\]}]*))#m',$contents,$found,PREG_SET_ORDER) ) {
     foreach ( $found as $h ) $hosts[] = ($h[1] ?? "").($h[2] ?? "").($h[3] ?? "");
   }
   return $hosts;
 }
 
-# relative bind hosts: only binds ("- ./x:/y", "source: ./x"), never env_file items
+# relative bind hosts: only binds ("- ./x:/y", "source: ./x", "{source: ./x}"), never env_file items
 function appdataCleanupNgComposeRelativeHosts($contents) {
+  $key = appdataCleanupNgComposeHostKey();
   $rel = array();
   if ( preg_match_all('#(?:^[ \t]*-|[\[,])[ \t]*["\']?(\.\.?(?:/[^\n:"\',\]]*)?):#m',$contents,$short) ) $rel = $short[1];
-  if ( preg_match_all('#^[ \t]*(?:-[ \t]*)?source[ \t]*:[ \t]*["\']?(\.\.?(?:/[^\n"\']*)?)["\']?[ \t]*$#m',$contents,$long) ) $rel = array_merge($rel,$long[1]);
+  if ( preg_match_all('#^[ \t]*(?:-[ \t]*)?'.$key.'[ \t]*["\']?(\.\.?(?:/[^\n"\']*)?)["\']?[ \t]*$#m',$contents,$long) ) $rel = array_merge($rel,$long[1]);
+  if ( preg_match_all('#[{,][ \t]*'.$key.'[ \t]*(?:"(\.\.?(?:/[^\n"]*)?)"|\'(\.\.?(?:/[^\n\']*)?)\'|(\.\.?(?:/[^\n"\',}]*)?)[,}])#m',$contents,$flow,PREG_SET_ORDER) ) {
+    foreach ( $flow as $h ) $rel[] = ($h[1] ?? "").($h[2] ?? "").($h[3] ?? "");
+  }
   return $rel;
 }
 
