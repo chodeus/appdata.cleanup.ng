@@ -38,7 +38,8 @@ $cases = array(
   "no dependents"            => array("", $self, 0, "destroy cache/appdata/app", ""),
   "snapshots only"           => array("1", $self, 0, "destroy -r cache/appdata/app", ""),
   "child inside the folder"  => array("1", $self . "cache/appdata/app/db\tfilesystem\tyes\t/mnt/cache/appdata/app/db\n", 0, "destroy -r cache/appdata/app", ""),
-  "child in the user view"   => array("1", $self . "cache/appdata/app/db\tfilesystem\tyes\t/mnt/user/appdata/app/db\n", 0, "destroy -r cache/appdata/app", ""),
+  "child under another pool" => array("1", $self . "cache/appdata/app/db\tfilesystem\tyes\t/mnt/backup/appdata/app/db\n", 0, "", "cache/appdata/app/db (mounted at /mnt/backup/appdata/app/db)"),
+  "malformed child row"      => array("1", $self . "cache/appdata/app/db\tfilesystem\n", 0, "", "could not be checked"),
   "child mounted elsewhere"  => array("1", $self . "cache/appdata/app/db\tfilesystem\tyes\t/mnt/disk1/db\n", 0, "", "cache/appdata/app/db (mounted at /mnt/disk1/db)"),
   "child not mounted"        => array("1", $self . "cache/appdata/app/old\tfilesystem\tno\tnone\n", 0, "", "cache/appdata/app/old (not mounted)"),
   "child volume"             => array("1", $self . "cache/appdata/app/vm\tvolume\t-\t-\n", 0, "", "cache/appdata/app/vm (a volume)"),
@@ -81,7 +82,11 @@ foreach ( $mounts as $name => $case ) {
 }
 check("mounts inside, prefix is not a parent", appdataCleanupNgMountsInside("/mnt/cache/appdata/app", $table) === array("/mnt/cache/appdata/app/db"), "application/x must not count");
 check("mounts inside, unreadable table", appdataCleanupNgMountsInside("/mnt/cache/appdata/app", "$bin/missing") === null);
+file_put_contents("$bin/empty", "");
+check("mounts inside, empty table", appdataCleanupNgMountsInside("/mnt/cache/appdata/app", "$bin/empty") === null);
+file_put_contents("$bin/short", "36 25 0:30 /\n");
+check("mounts inside, malformed row", appdataCleanupNgMountsInside("/mnt/cache/appdata/app", "$bin/short") === null);
 
-@unlink($log); @unlink($table); @unlink("$bin/zfs"); @rmdir($bin);
+@unlink($log); @unlink($table); @unlink("$bin/empty"); @unlink("$bin/short"); @unlink("$bin/zfs"); @rmdir($bin);
 if ( $fail ) exit(1);
-echo "delete scope tests passed (" . (count($cases) + count($mounts) + 2) . " cases)\n";
+echo "delete scope tests passed (" . (count($cases) + count($mounts) + 4) . " cases)\n";

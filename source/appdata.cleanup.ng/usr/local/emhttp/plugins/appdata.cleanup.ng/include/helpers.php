@@ -213,15 +213,17 @@ function appdataCleanupNgResolveZfsDataset($path) {
   return "";
 }
 
-# mount points strictly inside $dir in any of its views (pool, disk, /mnt/user); null when the mount table can't be read
+# mount points strictly inside $dir in any of its views (pool, disk, /mnt/user); null when the mount table can't be read or parsed
 function appdataCleanupNgMountsInside($dir,$mountinfo="/proc/self/mountinfo") {
-  $lines = @file($mountinfo,FILE_IGNORE_NEW_LINES);
-  if ( $lines === false ) return null;
+  $lines = @file($mountinfo,FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES);
   $d = appdataCleanupNgCanon($dir);
+  if ( ! $lines || $d === "" ) return null;
   $inside = array();
   foreach ( $lines as $line ) {
-    $mp = preg_replace_callback('/\\\\([0-7]{3})/',function($m) { return chr(octdec($m[1])); },explode(" ",$line)[4] ?? "");
-    if ( $d !== "" && strpos(appdataCleanupNgCanon($mp)."/",$d."/") === 0 && appdataCleanupNgCanon($mp) !== $d ) $inside[] = $mp;
+    $fields = explode(" ",$line);
+    if ( count($fields) < 5 || $fields[4] === "" ) return null;
+    $mp = preg_replace_callback('/\\\\([0-7]{3})/',function($m) { return chr(octdec($m[1])); },$fields[4]);
+    if ( strpos(appdataCleanupNgCanon($mp)."/",$d."/") === 0 && appdataCleanupNgCanon($mp) !== $d ) $inside[] = $mp;
   }
   return $inside;
 }
@@ -268,15 +270,17 @@ function appdataCleanupNgZfsChildrenOutside($ds) {
   $rows = array();
   foreach ( $o as $line ) {
     $p = explode("\t",rtrim($line,"\n"),4);
-    if ( count($p) === 4 ) $rows[$p[0]] = $p;
+    if ( count($p) !== 4 ) return null;   # a row we can't read may be the child that matters
+    $rows[$p[0]] = $p;
   }
   if ( ! isset($rows[$ds]) || $rows[$ds][2] !== "yes" ) return null;
-  $folder = appdataCleanupNgCanon($rows[$ds][3]);
+  # physical paths, not canonical: an inherited child always sits under its parent, and the /mnt/user view would equate another pool's path
+  $folder = rtrim(preg_replace('#/+#','/',$rows[$ds][3]),"/");
   $outside = array();
   foreach ( $rows as $name => $p ) {
     if ( $name === $ds ) continue;
-    $mp = appdataCleanupNgCanon($p[3]);
-    if ( $p[1] === "filesystem" && $p[2] === "yes" && $mp !== "" && $mp[0] === "/" && appdataCleanupNgPathUnder($mp,$folder) ) continue;
+    $mp = rtrim(preg_replace('#/+#','/',$p[3]),"/");
+    if ( $p[1] === "filesystem" && $p[2] === "yes" && $mp !== "" && $mp[0] === "/" && $folder !== "" && appdataCleanupNgPathUnder($mp,$folder) ) continue;
     $where = $p[1] !== "filesystem" ? "a volume" : ( $p[2] !== "yes" ? "not mounted" : "mounted at ".$p[3] );
     $outside[] = $name." (".$where.")";
   }
