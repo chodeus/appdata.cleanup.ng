@@ -34,6 +34,9 @@ jobs:
       - name: Every plugin function called is defined
         run: php .github/scripts/check-plugin-functions.php source
 
+      - name: A delete reaches nothing outside the folder
+        run: php .github/scripts/delete-scope.test.php
+
       - name: Validate plugin manifest (XML)
         run: xmllint --noout plugins/appdata.cleanup.ng.plg
 

@@ -355,13 +355,21 @@ case "deleteAppdata":
         appdataCleanupNgLog("zfs destroy".($r['recursive'] ? " -r" : "")." ".$dataset,LOG_INFO);
       } else {
         appdataCleanupNgLog("zfs destroy failed for ".$dataset.": ".$r['message'],LOG_WARNING);
-        $refused[] = $path." (zfs destroy failed)";
+        # mountpoints are anyone's to name, so the reason gets the same one-line cleanup as rm's
+        $why = isset($r['blocked']) ? substr(preg_replace('/[\x00-\x1f\x7f]+/'," ",$r['blocked']),0,300) : "";
+        $refused[] = $path.( $why !== "" ? " (not destroyed: ".$why.")" : " (zfs destroy failed)" );
       }
       continue;
     }
     # never rm -rf across a mount boundary that isn't a recognized dataset
     if ( appdataCleanupNgIsMountPoint($real) ) {
       $refused[] = $path." (mount point, not a known dataset)";
+      continue;
+    }
+    # rm -rf would also empty a filesystem mounted further inside (a child dataset, a bind mount)
+    $inner = appdataCleanupNgMountsInside($real);
+    if ( $inner === null || $inner ) {
+      $refused[] = $path.( $inner === null ? " (mount table unreadable)" : " (another filesystem is mounted inside it at ".substr(preg_replace('/[\x00-\x1f\x7f]+/'," ",$inner[0]),0,200)."; unmount or delete that first)" );
       continue;
     }
     $rmOut = array(); $rmRc = 1;

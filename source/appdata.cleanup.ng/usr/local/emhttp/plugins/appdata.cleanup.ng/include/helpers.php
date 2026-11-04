@@ -213,6 +213,19 @@ function appdataCleanupNgResolveZfsDataset($path) {
   return "";
 }
 
+# mount points strictly inside $dir in any of its views (pool, disk, /mnt/user); null when the mount table can't be read
+function appdataCleanupNgMountsInside($dir,$mountinfo="/proc/self/mountinfo") {
+  $lines = @file($mountinfo,FILE_IGNORE_NEW_LINES);
+  if ( $lines === false ) return null;
+  $d = appdataCleanupNgCanon($dir);
+  $inside = array();
+  foreach ( $lines as $line ) {
+    $mp = preg_replace_callback('/\\\\([0-7]{3})/',function($m) { return chr(octdec($m[1])); },explode(" ",$line)[4] ?? "");
+    if ( $d !== "" && strpos(appdataCleanupNgCanon($mp)."/",$d."/") === 0 && appdataCleanupNgCanon($mp) !== $d ) $inside[] = $mp;
+  }
+  return $inside;
+}
+
 function appdataCleanupNgIsMountPoint($path) {
   $rp = @realpath($path);
   if ( $rp === false || ! is_dir($rp) || $rp === "/" ) return false;
@@ -234,6 +247,10 @@ function appdataCleanupNgZfsDestroy($dataset) {
     $err = strtolower(implode("\n",$o));
     if ( strpos($err,"child") !== false || strpos($err,"snapshot") !== false || strpos($err,"dependent") !== false || strpos($err,"clone") !== false ) {
       $recursive = true;
+      # -r also destroys child datasets, but the in-use checks only covered what is mounted inside this folder
+      $outside = appdataCleanupNgZfsChildrenOutside($ds);
+      if ( $outside === null ) return array("ok"=>false,"recursive"=>true,"blocked"=>"its child datasets could not be checked","message"=>"child datasets could not be checked, not escalating to -r");
+      if ( $outside ) return array("ok"=>false,"recursive"=>true,"blocked"=>"child datasets outside this folder: ".implode(", ",$outside),"message"=>"child datasets outside the folder: ".implode(", ",$outside));
     } else {
       return array("ok"=>false,"recursive"=>false,"message"=>"dry-run failed, not escalating to -r: ".trim(implode("\n",$o)));
     }
@@ -241,6 +258,29 @@ function appdataCleanupNgZfsDestroy($dataset) {
   $o = array(); $rc = 1;
   @exec("zfs destroy ".($recursive ? "-r " : "").escapeshellarg($ds)." 2>&1",$o,$rc);
   return array("ok"=>($rc===0),"recursive"=>$recursive,"message"=>trim(implode("\n",$o)));
+}
+
+# child datasets of $ds whose data is not inside $ds's folder: volumes, unmounted, or mounted elsewhere; null when unreadable
+function appdataCleanupNgZfsChildrenOutside($ds) {
+  $o = array(); $rc = 1;
+  @exec("zfs list -H -r -t filesystem,volume -o name,type,mounted,mountpoint ".escapeshellarg($ds)." 2>/dev/null",$o,$rc);
+  if ( $rc !== 0 ) return null;
+  $rows = array();
+  foreach ( $o as $line ) {
+    $p = explode("\t",rtrim($line,"\n"),4);
+    if ( count($p) === 4 ) $rows[$p[0]] = $p;
+  }
+  if ( ! isset($rows[$ds]) || $rows[$ds][2] !== "yes" ) return null;
+  $folder = appdataCleanupNgCanon($rows[$ds][3]);
+  $outside = array();
+  foreach ( $rows as $name => $p ) {
+    if ( $name === $ds ) continue;
+    $mp = appdataCleanupNgCanon($p[3]);
+    if ( $p[1] === "filesystem" && $p[2] === "yes" && $mp !== "" && $mp[0] === "/" && appdataCleanupNgPathUnder($mp,$folder) ) continue;
+    $where = $p[1] !== "filesystem" ? "a volume" : ( $p[2] !== "yes" ? "not mounted" : "mounted at ".$p[3] );
+    $outside[] = $name." (".$where.")";
+  }
+  return $outside;
 }
 
 # ignore list: folders the user marks to never offer, persisted on flash keyed by canonical path
