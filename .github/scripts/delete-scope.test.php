@@ -46,6 +46,8 @@ $cases = array(
     array("cache/appdata/app" => "/mnt/cache/appdata/app", "cache/appdata/app/db" => "/mnt/disk1/db")),
   "parent not mounted now"   => array("1", $self, 0, "", "could not be checked", array()),
   "child mounted elsewhere"  => array("1", $self . "cache/appdata/app/db\tfilesystem\tyes\t/mnt/disk1/db\n", 0, "", "cache/appdata/app/db (mounted at /mnt/disk1/db)"),
+  "child at a path with a newline" => array("1", $self . "cache/appdata/app/db\tfilesystem\tyes\t/mnt/disk1/db\n", 0, "", "cache/appdata/app/db (mounted at /mnt/disk1/x\nforged: line)",
+    array("cache/appdata/app" => "/mnt/cache/appdata/app", "cache/appdata/app/db" => "/mnt/disk1/x\nforged: line")),
   "child not mounted"        => array("1", $self . "cache/appdata/app/old\tfilesystem\tno\tnone\n", 0, "", "cache/appdata/app/old (not mounted)"),
   "child volume"             => array("1", $self . "cache/appdata/app/vm\tvolume\t-\t-\n", 0, "", "cache/appdata/app/vm (a volume)"),
   "listing fails"            => array("1", "", 1, "", "could not be checked"),
@@ -69,13 +71,26 @@ foreach ( $cases as $name => $case ) {
   $mi = "$bin/live-mountinfo";
   $n = 40;
   file_put_contents($mi, "36 25 0:30 / / rw - ext4 /dev/root rw\n");
-  foreach ( $mounted as $ds => $at ) file_put_contents($mi, ($n++) . " 36 0:$n / " . str_replace(" ", "\\040", $at) . " rw - zfs " . str_replace(" ", "\\040", $ds) . " rw\n", FILE_APPEND);
+  foreach ( $mounted as $ds => $at ) file_put_contents($mi, ($n++) . " 36 0:$n / " . str_replace(array(" ", "\n"), array("\\040", "\\012"), $at) . " rw - zfs " . str_replace(" ", "\\040", $ds) . " rw\n", FILE_APPEND);
   $r = appdataCleanupNgZfsDestroy("cache/appdata/app", $mi);
+  if ( $name === "child at a path with a newline" ) $forging = $r;
   $ran = trim((string)@file_get_contents($log));
   check("$name: destroy command", $ran === $destroyed, "ran '" . $ran . "'");
   check("$name: result", $r['ok'] === ($destroyed !== ""), json_encode($r));
   if ( $refusal !== "" ) check("$name: reason", strpos($r['blocked'] ?? "", $refusal) !== false, json_encode($r));
 }
+
+// The refusal goes to syslog, which makes each line of a message its own record: listen on /dev/log
+@unlink("/dev/log");
+$listener = @stream_socket_server("udg:///dev/log", $errno, $errstr, STREAM_SERVER_BIND);
+appdataCleanupNgLog("zfs destroy failed for cache/appdata/app: " . $forging['message'], LOG_WARNING);
+$records = array();
+while ( $listener ) {
+  $ready = array($listener); $none = null; $none2 = null;
+  if ( ! stream_select($ready, $none, $none2, 1) ) break;
+  $records[] = stream_socket_recvfrom($listener, 8192);
+}
+check("log: a newline in a mount path stays in one record", strpos($forging['message'], "\n") !== false && count($records) === 1 && strpos($records[0], "x forged: line") !== false, json_encode($records));
 
 // rm -rf crosses into anything mounted inside the folder, in any of its views
 $table = "$bin/mountinfo";
@@ -148,4 +163,4 @@ check("dataset with an unreadable mount table: none", appdataCleanupNgResolveZfs
 
 @unlink($log); @unlink($table); @unlink($live); @unlink("$bin/empty"); @unlink("$bin/short"); @unlink("$bin/zfs"); @rmdir($bin);
 if ( $fail ) exit(1);
-echo "delete scope tests passed (" . (count($cases) + count($mounts) + count($resolves) + 5) . " cases)\n";
+echo "delete scope tests passed (" . (count($cases) + count($mounts) + count($resolves) + 6) . " cases)\n";

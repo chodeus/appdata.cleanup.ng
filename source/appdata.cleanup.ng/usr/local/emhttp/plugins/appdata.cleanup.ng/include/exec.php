@@ -356,7 +356,7 @@ case "deleteAppdata":
       } else {
         appdataCleanupNgLog("zfs destroy failed for ".$dataset.": ".$r['message'],LOG_WARNING);
         # mountpoints are anyone's to name, so the reason gets the same one-line cleanup as rm's
-        $why = isset($r['blocked']) ? substr(preg_replace('/[\x00-\x1f\x7f]+/'," ",$r['blocked']),0,300) : "";
+        $why = isset($r['blocked']) ? substr(appdataCleanupNgOneLine($r['blocked']),0,300) : "";
         $refused[] = $path.( $why !== "" ? " (not destroyed: ".$why.")" : " (zfs destroy failed)" );
       }
       continue;
@@ -369,14 +369,14 @@ case "deleteAppdata":
     # rm -rf would also empty a filesystem mounted further inside (a child dataset, a bind mount)
     $inner = appdataCleanupNgMountsInside($real);
     if ( $inner === null || $inner ) {
-      $refused[] = $path.( $inner === null ? " (mount table unreadable)" : " (another filesystem is mounted at or inside it, at ".substr(preg_replace('/[\x00-\x1f\x7f]+/'," ",$inner[0]),0,200)."; unmount or delete that first)" );
+      $refused[] = $path.( $inner === null ? " (mount table unreadable)" : " (another filesystem is mounted at or inside it, at ".substr(appdataCleanupNgOneLine($inner[0]),0,200)."; unmount or delete that first)" );
       continue;
     }
     $rmOut = array(); $rmRc = 1;
     exec("rm -rf ".escapeshellarg($real)." 2>&1",$rmOut,$rmRc);
     if ( $rmRc !== 0 || @file_exists($real) ) {
       # rm names the blocker (busy, permission); one clean line, since it can echo hostile file names
-      $why = substr(preg_replace('/[\x00-\x1f\x7f]+/'," ",trim(implode(" ",$rmOut))),0,200);
+      $why = substr(appdataCleanupNgOneLine(trim(implode(" ",$rmOut))),0,200);
       $refused[] = $path." (delete failed".( $why !== "" ? ": ".$why : "" ).")";
     }
   }

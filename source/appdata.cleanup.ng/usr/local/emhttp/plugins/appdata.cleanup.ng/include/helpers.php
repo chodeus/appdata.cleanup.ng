@@ -457,9 +457,13 @@ function appdataCleanupNgDeleteTemplate($file) {
 }
 
 # log to syslog so messages land in Tools > System Log and the Diagnostics bundle
+# one line for a log or a refusal: PHP's syslog() makes each line of a message its own record
+function appdataCleanupNgOneLine($text) {
+  return preg_replace('/[\x00-\x1f\x7f]+/'," ",(string)$text);
+}
 function appdataCleanupNgLog($message,$priority=LOG_INFO) {
   openlog("appdata.cleanup.ng",LOG_PID,LOG_USER);
-  syslog($priority,(string)$message);
+  syslog($priority,appdataCleanupNgOneLine($message));
   closelog();
 }
 
