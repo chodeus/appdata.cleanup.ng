@@ -6,7 +6,8 @@ if ( ! is_file("/.dockerenv") ) { fwrite(STDERR, "refusing to run outside a cont
 $ca = realpath((string)getenv("ACNG_TEST_CA_HELPERS"));
 if ( $ca === false ) { fwrite(STDERR, "ACNG_TEST_CA_HELPERS must name Community Applications' include/helpers.php\n"); exit(2); }
 require $ca;
-require $argv[1] ?? __DIR__ . "/../../source/appdata.cleanup.ng/usr/local/emhttp/plugins/appdata.cleanup.ng/include/helpers.php";
+$helpers = realpath($argv[1] ?? __DIR__ . "/../../source/appdata.cleanup.ng/usr/local/emhttp/plugins/appdata.cleanup.ng/include/helpers.php");
+require $helpers;
 
 $fail = 0;
 function check($name, $ok, $detail = "") {
@@ -79,6 +80,25 @@ wipe($cacheDir);
 mkdir($cacheDir, 0755);
 check("size: still measured when the cache folder isn't private", appdataCleanupNgFolderSizeBytes("$A/sized") === $du);
 check("size: but nothing cached there", ! file_exists($cache));
+
+
+// Two scans at once, each measuring a different folder with a slowed du, in both orders: the cache keeps both
+@mkdir("/tmp/acng-slow", 0755);
+file_put_contents("/tmp/acng-slow/du", "#!/bin/sh\nsleep 1\nexec " . trim((string)shell_exec("command -v du")) . " \"\$@\"\n");
+chmod("/tmp/acng-slow/du", 0755);
+put("$A/racea/f", "a"); put("$A/raceb/f", "bb");
+foreach ( array(array("racea", "raceb"), array("raceb", "racea")) as $order ) {
+  wipe($cacheDir);
+  $procs = array();
+  foreach ( $order as $i => $folder ) {
+    $code = "require " . var_export($helpers, true) . "; usleep(" . ($i * 200000) . "); appdataCleanupNgFolderSizeBytes(" . var_export("$A/$folder", true) . ");";
+    $procs[] = proc_open(array("env", "PATH=/tmp/acng-slow:" . getenv("PATH"), PHP_BINARY, "-r", $code), array(), $pipes);
+  }
+  foreach ( $procs as $proc ) proc_close($proc);
+  $keys = array_keys((array)json_decode((string)@file_get_contents($cache), true));
+  sort($keys);
+  check("size: two scans at once (" . implode(" then ", $order) . ") both stay cached", $keys === array("$A/racea", "$A/raceb"), json_encode($keys));
+}
 
 if ( $fail ) exit(1);
 echo "stale template and folder size tests passed\n";

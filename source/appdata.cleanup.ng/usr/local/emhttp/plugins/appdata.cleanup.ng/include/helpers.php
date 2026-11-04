@@ -420,7 +420,6 @@ function appdataCleanupNgSizeCacheFile() {
   return $dir."/sizecache.json";
 }
 
-# du -sb, cached keyed by mtime so repeat scans don't re-walk unchanged folders
 # the size cache, or empty when there is none or it is a link
 function appdataCleanupNgReadSizeCache($cacheFile) {
   if ( $cacheFile === "" || ! is_file($cacheFile) || is_link($cacheFile) ) return array();
@@ -429,7 +428,12 @@ function appdataCleanupNgReadSizeCache($cacheFile) {
 }
 # Write a fresh private file and rename over the target: rename replaces a planted
 # symlink instead of writing through it, so there is no check-then-write window.
-function appdataCleanupNgWriteSizeCache($cacheFile,$cache) {
+function appdataCleanupNgWriteSizeCache($cacheFile,$real,$entry) {
+  $lock = @fopen($cacheFile.".lock","c");
+  if ( $lock === false ) return;
+  @flock($lock,LOCK_EX);
+  $cache = appdataCleanupNgReadSizeCache($cacheFile);   # read again under the lock: a scan running alongside keeps its entries
+  $cache[$real] = $entry;
   $tmp = $cacheFile.".".getmypid().".tmp";
   $json = json_encode($cache);
   $fh = ( $json !== false ) ? @fopen($tmp,"x") : false;
@@ -437,7 +441,10 @@ function appdataCleanupNgWriteSizeCache($cacheFile,$cache) {
   if ( $fh !== false ) $ok = ( @fclose($fh) && $ok );
   # rename only a complete 0600 file; on any failure the existing cache stays as it was
   if ( ! $ok || ! @chmod($tmp,0600) || ! @rename($tmp,$cacheFile) ) @unlink($tmp);
+  @flock($lock,LOCK_UN);
+  @fclose($lock);
 }
+# du -sb, cached keyed by mtime so repeat scans don't re-walk unchanged folders
 function appdataCleanupNgFolderSizeBytes($path) {
   $real = @realpath($path);
   if ( $real === false || ! is_dir($real) ) return -1;
@@ -450,10 +457,7 @@ function appdataCleanupNgFolderSizeBytes($path) {
   $out = array(); $rc = 1;
   @exec("du -sb ".escapeshellarg($real)." 2>/dev/null",$out,$rc);
   $bytes = ( $rc === 0 && ! empty($out) ) ? (int)strtok(trim($out[0]),"\t ") : -1;
-  if ( $bytes >= 0 && $cacheFile !== "" ) {
-    $cache[$real] = array((int)$mtime,$bytes);
-    appdataCleanupNgWriteSizeCache($cacheFile,$cache);
-  }
+  if ( $bytes >= 0 && $cacheFile !== "" ) appdataCleanupNgWriteSizeCache($cacheFile,$real,array((int)$mtime,$bytes));
   return $bytes;
 }
 
