@@ -134,7 +134,8 @@ case 'getOrphanAppdata':
 
   # remove folders claimed by docker-compose stacks (Compose Manager), incl. 'down' stacks
   $composeUncertain = false;
-  $composeProtected = appdataCleanupNgComposeReferencedPaths($composeUncertain);
+  $composeRootBound = false;
+  $composeProtected = appdataCleanupNgComposeReferencedPaths($composeUncertain,$composeRootBound);
   if ( ! empty($composeProtected) ) {
     $composeSet = array_flip($composeProtected);
     foreach ( $availableVolumes as $key => $volume ) {
@@ -159,7 +160,7 @@ case 'getOrphanAppdata':
   $fsScanSkipped = "";
   if ( getPost("fsscan","no") === "yes" ) {
     # a container that bind-mounts an entire appdata root makes every child "in use"; offering template-less children then is unsafe
-    $rootMounted = false;
+    $rootMounted = $composeRootBound;   # a stack that binds a whole root counts like a container that does
     foreach ( appdataCleanupNgAppdataRoots() as $r ) {
       $rc = appdataCleanupNgCanon($r);
       foreach ( $inUseBy as $u => $unused ) {
@@ -167,9 +168,9 @@ case 'getOrphanAppdata':
       }
     }
     if ( $composeUncertain ) {
-      $fsScanSkipped = "A Docker Compose stack can't be fully read (an unresolved \${VAR} or ../ host path, an include or extends, or a compose location that is missing or unreadable), so the scan can't tell which folders are in use. Check the stacks in Compose Manager.";
+      $fsScanSkipped = "A Docker Compose stack can't be fully read (docker compose could not read it, an unset variable in a path, or a compose location that is missing or unreadable), so the scan can't tell which folders are in use. Check the stacks in Compose Manager.";
     } else if ( $rootMounted ) {
-      $fsScanSkipped = "A container (running or stopped) bind-mounts an entire appdata root, so every folder is in use. The filesystem scan is disabled to avoid offering in-use folders.";
+      $fsScanSkipped = "A container (running or stopped) or a Compose stack bind-mounts an entire appdata root, so every folder is in use. The filesystem scan is disabled to avoid offering in-use folders.";
     } else {
       $coveredSegs = $templateSegs;
       foreach ( $inUseBy as $u => $unused ) { $s = appdataCleanupNgOwnerSegment($u); if ( $s !== "" ) $coveredSegs[$s] = true; }

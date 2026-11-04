@@ -100,6 +100,69 @@ $uncertain = null;
 $protected = appdataCleanupNgComposeReferencedPaths($uncertain);
 check("envpath: protects the folder it names", $uncertain === false && in_array("$A/fromenv", $protected, true), json_encode(array($uncertain, $protected)));
 
+// More that only compose resolves: a profiled service, an appdata path in an environment value behind a /mnt/user
+// bind, an include named through a variable, an include's own env_file, and build.additional_contexts
+fresh();
+put("$P/.env", "INCDIR=incv\n");
+put("$P/docker-compose.yml", <<<'YAML'
+include:
+  - path: ${INCDIR}/inc.yml
+  - path: incfile/other.yml
+    env_file: ../incenv/inc.env
+services:
+  web:
+    image: alpine
+    volumes:
+      - /mnt/user:/mnt/user
+    environment:
+      CONFIG_DIR: /mnt/user/appdata/viaenv
+    build:
+      context: .
+      additional_contexts:
+        assets: /mnt/user/appdata/extractx
+  dbg:
+    image: alpine
+    profiles: ["debug"]
+    volumes:
+      - /mnt/user/appdata/profiled:/p
+YAML);
+put("$P/incv/inc.yml", "services:\n  i1:\n    image: alpine\n");
+put("$P/incfile/other.yml", "services:\n  i2:\n    image: alpine\n");
+put("/boot/config/plugins/compose.manager/projects/incenv/inc.env", "Z=1\n");
+@mkdir("$A/extractx", 0755, true);
+$uncertain = null; $rootBound = null;
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain, $rootBound);
+check("more compose resolves: not uncertain", $uncertain === false, json_encode($protected));
+foreach ( array("profiled", "viaenv", "extractx") as $folder ) check("more compose resolves: protects $folder", in_array("$A/$folder", $protected, true), json_encode($protected));
+check("a stack binding /mnt/user covers the appdata root", $rootBound === true);
+
+// The same stack's include and env_file sit in appdata
+fresh();
+put("$P/indirect", "$A/stackhome");
+put("$A/stackhome/docker-compose.yml", "include:\n  - path: \${INCDIR}/inc.yml\n  - path: ../incfile2/other.yml\n    env_file: ../incenv2/inc.env\nservices:\n  w:\n    image: alpine\n");
+put("$A/stackhome/.env", "INCDIR=../incv2\n");
+put("$A/incv2/inc.yml", "services:\n  i1:\n    image: alpine\n");
+put("$A/incfile2/other.yml", "services:\n  i2:\n    image: alpine\n");
+put("$A/incenv2/inc.env", "Z=1\n");
+$uncertain = null; $rootBound = null;
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain, $rootBound);
+foreach ( array("incv2", "incfile2", "incenv2") as $folder ) check("include files in appdata: protects $folder", in_array("$A/$folder", $protected, true), json_encode(array($uncertain, $protected)));
+check("a stack without a whole-root bind leaves the scan on", $rootBound === false);
+
+// An unset variable outside any path doesn't block deletes, and the stack's binds stay protected
+fresh();
+put("$P/docker-compose.yml", "services:\n  app:\n    image: alpine\n    environment:\n      TZ: \${TZ}\n    volumes:\n      - /mnt/user/appdata/tzapp:/config\n");
+$uncertain = null;
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+check("an unset TZ: not uncertain, bind protected", $uncertain === false && in_array("$A/tzapp", $protected, true), json_encode(array($uncertain, $protected)));
+
+// When compose can't read a stack, the patterns still protect the binds they can see
+fresh();
+put("$P/docker-compose.yml", "services:\n  app:\n    image: alpine\n    volumes:\n      - /mnt/user/appdata/stillsafe:/config\n    labels: [unclosed\n");
+$uncertain = null;
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+check("compose fails: uncertain, and the visible bind still protected", $uncertain === true && in_array("$A/stillsafe", $protected, true), json_encode(array($uncertain, $protected)));
+
 // Compose can't read it: fail closed
 $unreadable = array(
   "an unset variable" => "services:\n  app:\n    image: alpine\n    volumes:\n      - \${NOPE}/x:/config\n",
@@ -150,9 +213,21 @@ list($u, $p) = child($basePath);
 check("no compose CLI: the patterns still read it", $u === false && in_array("$A/fallback", $p, true), json_encode(array($u, $p)));
 list($u, $p) = child("$fake:$basePath", "old");
 check("older compose: retried without --no-env-resolution", $u === false && in_array("$A/fakebind", $p, true) && ! in_array("$A/fallback", $p, true), json_encode(array($u, $p)));
+// A real compose that only lacks --no-env-resolution: a stack with env_file can't have those files found
+$oldReal = "/opt/acng-old";
+@mkdir($oldReal, 0755, true);
+file_put_contents("$oldReal/docker-compose", "#!/bin/sh\nfor a in \"\$@\"; do [ \"\$a\" = \"--no-env-resolution\" ] && { echo 'unknown flag: --no-env-resolution' >&2; exit 1; }; done\nexec /opt/acng-compose/docker-compose \"\$@\"\n");
+chmod("$oldReal/docker-compose", 0755);
+put("$P/docker-compose.yml", "services:\n  app:\n    image: alpine\n    env_file:\n      - /mnt/user/appdata/oldenv/app.env\n");
+put("$A/oldenv/app.env", "A=1\n");
+list($u, $p) = child("$oldReal:$basePath");
+check("older compose and an env_file: uncertain", $u === true, json_encode(array($u, $p)));
+put("$P/docker-compose.yml", "services:\n  app:\n    image: alpine\n    volumes:\n      - /mnt/user/appdata/fallback:/config\n      - /mnt/user/appdata/fakebind:/c\n");
 list($u, $p) = child("$fake:$basePath", "ancient");
 check("compose without --format json: the patterns read it", $u === false && in_array("$A/fallback", $p, true), json_encode(array($u, $p)));
-foreach ( array("garbage", "timeout", "warn") as $mode ) {
+list($u, $p) = child("$fake:$basePath", "warn");
+check("compose warns of an unset variable outside any path: still read", $u === false && in_array("$A/fakebind", $p, true), json_encode(array($u, $p)));
+foreach ( array("garbage", "timeout") as $mode ) {
   list($u, $p) = child("$fake:$basePath", $mode);
   check("compose answer '$mode': uncertain", $u === true, json_encode(array($u, $p)));
 }
