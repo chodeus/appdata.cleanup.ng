@@ -616,14 +616,11 @@ function appdataCleanupNgComposeConfig($source,$files,$envFile) {
     $config = json_decode($out,true);
     if ( ! is_array($config) ) return false;
     if ( $marker !== "" ) {
-      $inPath = false;
-      array_walk_recursive($config,function($v) use ($marker,&$inPath) {
-        if ( is_string($v) && strpos($v,$marker) !== false && strpos($v,"/") !== false ) $inPath = true;
-      });
-      if ( $inPath ) return false;
+      $paths = appdataCleanupNgComposeConfigPaths($config);
+      foreach ( array_merge($paths['mounts'],$paths['files'],$paths['mentions']) as $path ) if ( strpos($path,$marker) !== false ) return false;
     }
-    # without --no-env-resolution compose folds env_file into environment, so those files can't be found
-    if ( $attempt === 1 ) foreach ( $used as $f ) if ( stripos((string)@file_get_contents($f),"env_file") !== false ) return false;
+    # without --no-env-resolution compose folds env_file into environment, so those files (also in includes) can't be found
+    if ( $attempt === 1 ) foreach ( $used as $f ) if ( preg_match('/\b(env_file|include|extends)\b/',(string)@file_get_contents($f)) ) return false;
     return $config;
   }
   return null;
@@ -649,7 +646,7 @@ function appdataCleanupNgComposeConfigPaths($config) {
   # container-side paths (targets) are not host paths
   $walk = function($node) use (&$walk,&$mentions) {
     foreach ( (array)$node as $key => $value ) {
-      if ( $key === "target" ) continue;
+      if ( $key === "target" && ! is_array($value) ) continue;   # a container-side path; a service may be named target
       if ( is_array($value) ) $walk($value);
       else if ( is_string($value) && preg_match_all('#/mnt/[^\s"\':;,=]+#',$value,$m) ) foreach ( $m[0] as $hit ) $mentions[] = $hit;
     }
@@ -685,7 +682,9 @@ function appdataCleanupNgComposeNamedPaths($files,$env) {
 
 # a path that holds a whole appdata root (a bind of /mnt/user, or of appdata itself): every folder under it is in use
 function appdataCleanupNgCoversAppdataRoot($path) {
-  foreach ( appdataCleanupNgPathViews(preg_replace('#^/mnt/user0(?=/|$)#','/mnt/user',(string)$path)) as $view ) {
+  $path = preg_replace('#^/mnt/user0(?=/|$)#','/mnt/user',(string)$path);
+  if ( $path !== "" && trim($path,"/") === "" ) return true;   # / itself, which the path views leave out
+  foreach ( appdataCleanupNgPathViews($path) as $view ) {
     foreach ( appdataCleanupNgAppdataRoots() as $root ) if ( appdataCleanupNgPathUnder(appdataCleanupNgCanon($root),$view) ) return true;
   }
   return false;
@@ -753,9 +752,10 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null, &$rootBound 
       # a quoted host may hold the other quote ("/x/Bob's app"); a one-line list or map holds binds too
       if ( preg_match_all('#(?:^[ \t]*(?:-[ \t]*(?:source[ \t]*:)?|source[ \t]*:)|[\[,][ \t]*|[{,][ \t]*source[ \t]*:)[ \t]*(?:"(/[^\n:"]*)|\'(/[^\n:\']*)|(/[^\n:"\',\]}]*))#m',$contents,$hosts,PREG_SET_ORDER) ) {
         foreach ( $hosts as $h ) {
-          $host = rtrim(($h[1] ?? "").($h[2] ?? "").($h[3] ?? ""),"/");
+          $raw = ($h[1] ?? "").($h[2] ?? "").($h[3] ?? "");
+          $host = rtrim($raw,"/");
           if ( appdataCleanupNgHasControlChars($host) || preg_match('#(^|/)\.\.(/|$)#',$host) ) { $uncertain = true; continue; }
-          if ( appdataCleanupNgCoversAppdataRoot($host) ) $rootBound = true;
+          if ( appdataCleanupNgCoversAppdataRoot($raw) ) $rootBound = true;
           appdataCleanupNgProtectFolderOf($protected,$host);
         }
       }

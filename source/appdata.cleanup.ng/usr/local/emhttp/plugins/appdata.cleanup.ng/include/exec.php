@@ -161,10 +161,9 @@ case 'getOrphanAppdata':
   if ( getPost("fsscan","no") === "yes" ) {
     # a container that bind-mounts an entire appdata root makes every child "in use"; offering template-less children then is unsafe
     $rootMounted = $composeRootBound;   # a stack that binds a whole root counts like a container that does
-    foreach ( appdataCleanupNgAppdataRoots() as $r ) {
-      $rc = appdataCleanupNgCanon($r);
-      foreach ( $inUseBy as $u => $unused ) {
-        if ( appdataCleanupNgPathUnder($rc,$u) ) { $rootMounted = true; break 2; }
+    foreach ( $info as $installedDocker ) {
+      foreach ( (array)($installedDocker['Volumes'] ?? array()) as $volume ) {
+        if ( appdataCleanupNgCoversAppdataRoot(explode(":",(string)$volume)[0]) ) { $rootMounted = true; break 2; }
       }
     }
     if ( $composeUncertain ) {

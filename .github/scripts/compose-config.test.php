@@ -163,6 +163,20 @@ $uncertain = null;
 $protected = appdataCleanupNgComposeReferencedPaths($uncertain);
 check("compose fails: uncertain, and the visible bind still protected", $uncertain === true && in_array("$A/stillsafe", $protected, true), json_encode(array($uncertain, $protected)));
 
+// A stack binding / (a monitoring stack) covers every root; a URL holding an unset variable is not a path;
+// a service may be named target
+fresh();
+put("$P/docker-compose.yml", "services:\n  mon:\n    image: alpine\n    volumes:\n      - /:/host:ro\n  target:\n    image: alpine\n    environment:\n      DATA: /mnt/user/appdata/targetsvc\n      DB_URL: postgres://app:\${DB_PASS}@db/app\n");
+$uncertain = null; $rootBound = null;
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain, $rootBound);
+check("a stack binding /: covers the appdata root", $rootBound === true);
+check("an unset variable in a URL: not uncertain", $uncertain === false, json_encode($protected));
+fresh();
+put("$P/docker-compose.yml", "services:\n  target:\n    image: alpine\n    environment:\n      DATA: /mnt/user/appdata/targetsvc\n");
+$uncertain = null;
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+check("a service named target: its path protected", $uncertain === false && in_array("$A/targetsvc", $protected, true), json_encode(array($uncertain, $protected)));
+
 // Compose can't read it: fail closed
 $unreadable = array(
   "an unset variable" => "services:\n  app:\n    image: alpine\n    volumes:\n      - \${NOPE}/x:/config\n",
@@ -209,6 +223,12 @@ function child($path, $mode = "") {
 }
 fresh();
 put("$P/docker-compose.yml", "services:\n  app:\n    image: alpine\n    volumes:\n      - /mnt/user/appdata/fallback:/config\n      - /mnt/user/appdata/fakebind:/c\n");
+file_put_contents("$P/docker-compose.yml", "services:\n  mon:\n    image: alpine\n    volumes:\n      - /:/host:ro\n");
+file_put_contents("/tmp/acng-probe-root.php", '<?php require ' . var_export($helpers, true) . '; $u = null; $r = null; appdataCleanupNgComposeReferencedPaths($u, $r); echo json_encode($r);');
+$rp = proc_open(array(PHP_BINARY, "/tmp/acng-probe-root.php"), array(1 => array("pipe", "w")), $pipes, null, array("PATH" => $basePath));
+$rootOut = stream_get_contents($pipes[1]); fclose($pipes[1]); proc_close($rp);
+check("no compose CLI: a stack binding / covers the appdata root", $rootOut === "true", $rootOut);
+put("$P/docker-compose.yml", "services:\n  app:\n    image: alpine\n    volumes:\n      - /mnt/user/appdata/fallback:/config\n      - /mnt/user/appdata/fakebind:/c\n");
 list($u, $p) = child($basePath);
 check("no compose CLI: the patterns still read it", $u === false && in_array("$A/fallback", $p, true), json_encode(array($u, $p)));
 list($u, $p) = child("$fake:$basePath", "old");
@@ -222,6 +242,11 @@ put("$P/docker-compose.yml", "services:\n  app:\n    image: alpine\n    env_file
 put("$A/oldenv/app.env", "A=1\n");
 list($u, $p) = child("$oldReal:$basePath");
 check("older compose and an env_file: uncertain", $u === true, json_encode(array($u, $p)));
+put("$P/docker-compose.yml", "include:\n  - inc.compose\nservices:\n  app:\n    image: alpine\n");
+put("$P/inc.compose", "services:\n  i:\n    image: alpine\n    env_file:\n      - /mnt/user/appdata/hiddenenv/x.env\n");
+put("$A/hiddenenv/x.env", "A=1\n");
+list($u, $p) = child("$oldReal:$basePath");
+check("older compose and an include: uncertain", $u === true, json_encode(array($u, $p)));
 put("$P/docker-compose.yml", "services:\n  app:\n    image: alpine\n    volumes:\n      - /mnt/user/appdata/fallback:/config\n      - /mnt/user/appdata/fakebind:/c\n");
 list($u, $p) = child("$fake:$basePath", "ancient");
 check("compose without --format json: the patterns read it", $u === false && in_array("$A/fallback", $p, true), json_encode(array($u, $p)));
