@@ -152,11 +152,16 @@ function toggleSelectAll() {
 }
 
 function ignoreThis(el) {
-	$.post(caURL,{action:'ignorePath',path:$(el).data('path'),csrf_token:csrf_token},function(){ loadAppdata(); });
+	$.post(caURL,{action:'ignorePath',path:$(el).data('path'),csrf_token:csrf_token},acngIgnoreSaved);
 }
 
 function unignoreThis(el) {
-	$.post(caURL,{action:'unignorePath',path:$(el).data('path'),csrf_token:csrf_token},function(){ loadAppdata(); });
+	$.post(caURL,{action:'unignorePath',path:$(el).data('path'),csrf_token:csrf_token},acngIgnoreSaved);
+}
+
+function acngIgnoreSaved(data) {
+	if ( $.trim(String(data || "")) !== "ok" ) swal("<?tr("The ignore list was not saved")?>","<?tr("Nothing changed; try again.")?>","error");
+	loadAppdata();
 }
 
 function deleteSelectedTemplates() {

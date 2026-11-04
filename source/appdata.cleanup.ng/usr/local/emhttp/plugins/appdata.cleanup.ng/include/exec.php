@@ -385,13 +385,11 @@ case "captureDiagnostics":
   break;
 
 case "ignorePath":
-  appdataCleanupNgAddIgnore(getPost("path",""));
-  echo "ok";
+  echo appdataCleanupNgAddIgnore(getPost("path","")) ? "ok" : "failed";
   break;
 
 case "unignorePath":
-  appdataCleanupNgRemoveIgnore(getPost("path",""));
-  echo "ok";
+  echo appdataCleanupNgRemoveIgnore(getPost("path","")) ? "ok" : "failed";
   break;
 
 case "deleteTemplates":

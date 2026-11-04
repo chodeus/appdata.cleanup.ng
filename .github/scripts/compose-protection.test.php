@@ -46,6 +46,18 @@ $cases = array(
     "$projects/p/envpath" => "/mnt/user/settings/stack.env", "/mnt/user/settings/stack.env" => "APPDIR=/mnt/user/appdata/envvar\n",
     "$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR}:/config\n",
   ), array("envvar"), false),
+  "a bind on another pool" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - /mnt/nvme/appdata/poolapp:/config\n"), array("poolapp"), false),
+  "a bind on an array disk" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - /mnt/disk1/appdata/diskapp:/config\n"), array("diskapp"), false),
+  "a long-syntax bind led by source" => array(array(
+    "$projects/p/indirect" => $appdata, "$appdata/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - source: ./longapp\n        target: /config\n        type: bind\n",
+  ), array("longapp"), false),
+  "the env file's folder" => array(array(
+    "$projects/p/envpath" => "$appdata/secrets/stack.env", "$appdata/secrets/stack.env" => "TZ=UTC\n", "$projects/p/docker-compose.yml" => "services: {}\n",
+  ), array("secrets"), false),
+  "an extra compose file's folder" => array(array(
+    "$projects/p/docker-compose.yml" => "services: {}\n", "$projects/p/extra_compose_files" => "$appdata/shared/extra.yml\n", "$appdata/shared/extra.yml" => "services: {}\n",
+  ), array("shared"), false),
+  "an env_file above the folder" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    env_file:\n      - ../shared.env\n    volumes:\n      - /mnt/user/appdata/envf:/config\n"), array("envf"), false),
   "a missing compose file" => array(array("$projects/p/indirect" => "$appdata/gone/prod.yml", "$projects/p/indirect_mode" => "file"), array(), true),
   "a missing compose folder" => array(array("$projects/p/indirect" => "$appdata/gone"), array(), true),
   "an unknown mode" => array(array("$projects/p/indirect" => "$appdata/home", "$projects/p/indirect_mode" => "weird", "$appdata/home/docker-compose.yml" => "services: {}\n"), array(), true),
@@ -56,7 +68,7 @@ $cases = array(
 );
 foreach ( $cases as $name => $case ) {
   list($files, $folders, $uncertainWanted) = $case;
-  wipe("/boot/config/plugins/compose.manager"); wipe($appdata); wipe("/mnt/user/settings");
+  wipe("/boot/config/plugins/compose.manager"); wipe($appdata); wipe("/mnt/user/settings"); wipe("/mnt/user/stacks");
   @mkdir($projects . "/p", 0755, true);
   @mkdir($appdata . "/home", 0755, true);
   foreach ( $files as $path => $body ) put($path, $body);
@@ -65,6 +77,29 @@ foreach ( $cases as $name => $case ) {
   check("$name: uncertain", $uncertain === $uncertainWanted, json_encode(array("uncertain" => $uncertain, "protected" => $protected)));
   foreach ( $folders as $folder ) check("$name: protects $folder", in_array("$appdata/$folder", $protected, true), json_encode($protected));
 }
+
+// A compose source reached through a symlink protects the real folder, and its relative binds
+wipe("/boot/config/plugins/compose.manager"); wipe($appdata); wipe("/mnt/user/stacks");
+@mkdir("$projects/p", 0755, true);
+put("$appdata/linked/docker-compose.yml", "services:\n  app:\n    image: x\n    volumes:\n      - ./config:/config\n");
+@mkdir("/mnt/user/stacks", 0755, true);
+symlink("$appdata/linked", "/mnt/user/stacks/linked");
+put("$projects/p/indirect", "/mnt/user/stacks/linked");
+$uncertain = null;
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+check("a symlinked compose source", $uncertain === false && in_array("$appdata/linked", $protected, true), json_encode(array($uncertain, $protected)));
+
+// A relative envpath is relative to the project folder, wherever PHP happens to run
+wipe("/boot/config/plugins/compose.manager"); wipe("/tmp/acng-cwd");
+put("/tmp/acng-cwd/stack.env", "APPDIR=/mnt/user/appdata/wrong\n");
+put("$projects/p/stack.env", "APPDIR=/mnt/user/appdata/right\n");
+put("$projects/p/envpath", "stack.env");
+put("$projects/p/docker-compose.yml", "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR}:/config\n");
+$cwd = getcwd(); chdir("/tmp/acng-cwd");
+$uncertain = null;
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+chdir($cwd);
+check("a relative envpath", in_array("$appdata/right", $protected, true) && ! in_array("$appdata/wrong", $protected, true), json_encode($protected));
 
 // The ignore list
 $ignore = appdataCleanupNgIgnoreFile();
