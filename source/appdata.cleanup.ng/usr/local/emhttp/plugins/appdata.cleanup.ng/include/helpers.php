@@ -358,18 +358,20 @@ function appdataCleanupNgIgnoreFile() {
 
 function appdataCleanupNgIgnoreList() {
   static $list = null;
-  if ( $list === null ) $list = appdataCleanupNgReadIgnoreList();
+  if ( $list === null ) $list = appdataCleanupNgReadIgnoreList() ?? array();
   return $list;
 }
 
+# null when the list is there but can't be read, so a change never writes an empty list over it
 function appdataCleanupNgReadIgnoreList() {
   $list = array();
   $f = appdataCleanupNgIgnoreFile();
-  if ( is_file($f) ) {
-    foreach ( (array)@file($f,FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES) as $line ) {
-      $c = appdataCleanupNgCanon($line);
-      if ( $c !== "" ) $list[$c] = true;
-    }
+  if ( ! is_file($f) ) return $list;
+  $lines = @file($f,FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES);
+  if ( $lines === false ) return null;
+  foreach ( $lines as $line ) {
+    $c = appdataCleanupNgCanon($line);
+    if ( $c !== "" ) $list[$c] = true;
   }
   return $list;
 }
@@ -388,11 +390,14 @@ function appdataCleanupNgUpdateIgnoreList($change) {
   if ( $lock === false ) return false;
   if ( ! flock($lock,LOCK_EX) ) { fclose($lock); return false; }
   $list = appdataCleanupNgReadIgnoreList();
-  $change($list);
-  $body = empty($list) ? "" : implode("\n",array_keys($list))."\n";
-  $tmp = $f.".tmp".getmypid();
-  $ok = @file_put_contents($tmp,$body) === strlen($body) && @rename($tmp,$f);
-  if ( ! $ok ) @unlink($tmp);
+  $ok = false;
+  if ( $list !== null ) {
+    $change($list);
+    $body = empty($list) ? "" : implode("\n",array_keys($list))."\n";
+    $tmp = $f.".tmp".getmypid();
+    $ok = @file_put_contents($tmp,$body) === strlen($body) && @rename($tmp,$f);
+    if ( ! $ok ) @unlink($tmp);
+  }
   flock($lock,LOCK_UN);
   fclose($lock);
   return $ok;
@@ -585,14 +590,19 @@ function appdataCleanupNgParseEnvFile($file,&$env) {
   }
 }
 
+# one ${VAR...} or $VAR as compose expands it; an unset ${VAR}, ${VAR:?err} or ${VAR?err} stays as written
+function appdataCleanupNgExpandOne($m,$env) {
+  $name = ( $m[1] ?? "" ) !== "" ? $m[1] : ( $m[4] ?? "" );
+  $op = $m[2] ?? "";
+  $arg = $m[3] ?? "";
+  $set = isset($env[$name]) && $env[$name] !== "";
+  if ( $op === ":+" || $op === "+" ) return ( $op === "+" ? isset($env[$name]) : $set ) ? $arg : "";
+  if ( $set ) return $env[$name];
+  return ( ( $op === ":-" || $op === "-" ) && $arg !== "" ) ? $arg : $m[0];
+}
 function appdataCleanupNgExpandEnv($text,$env) {
   for ( $pass = 0; $pass < 2; $pass++ ) {
-    $text = preg_replace_callback('/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?-([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)/',function($m) use ($env) {
-      $name = ( isset($m[1]) && $m[1] !== "" ) ? $m[1] : ( isset($m[3]) ? $m[3] : "" );
-      if ( $name !== "" && isset($env[$name]) && $env[$name] !== "" ) return $env[$name];
-      if ( isset($m[2]) && $m[2] !== "" ) return $m[2]; # ${VAR:-default}
-      return $m[0];                                     # unresolved: leave as-is
-    },$text);
+    $text = preg_replace_callback('/\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?+])([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)/',function($m) use ($env) { return appdataCleanupNgExpandOne($m,$env); },$text);
   }
   return $text;
 }
@@ -692,7 +702,7 @@ function appdataCleanupNgComposeText($file,$env) {
 # true when a compose file's binds can't all be known: an unresolved ${VAR} in a bind host (short "- ${VAR}/x:/y", where
 # [^\n:=] skips "KEY=val" items, or long "source: ${VAR}", also in one-line lists and maps), or an include or extends
 function appdataCleanupNgComposeTextUnreadable($contents) {
-  return preg_match('#(?:^[ \t]*-|[\[,])[ \t]*["\']?[^\n:=,\]]*\$\{?[A-Za-z_][^\n:]*:/#m',$contents)
+  return preg_match('#(?:^[ \t]*-|[\[,])[ \t]*["\']?[^\n:=,\]]*\$(?:\{[^}\n]*\}|[A-Za-z_])[^\n:]*:/#m',$contents)
     || preg_match('#(?:^[ \t]*(?:-[ \t]*)?|[{,][ \t]*)source[ \t]*:[ \t]*["\']?[^\n,}]*\$[A-Za-z_{]#m',$contents)
     || preg_match('#^[ \t]*["\']?(?:include|extends)["\']?[ \t]*:#m',$contents);   # their files are not read here
 }
@@ -753,7 +763,7 @@ function appdataCleanupNgComposeProtectRootMatches($contents,$pattern,$roots,&$p
       if ( $firstSeg !== false && $firstSeg !== "" ) foreach ( appdataCleanupNgPathViews($hit[1]."/".$firstSeg) as $c ) $protected[$c] = true;
     }
   }
-  if ( preg_match_all('#\$(?:\{[A-Za-z_][A-Za-z0-9_]*(?::?-[^}]*)?\}|[A-Za-z_][A-Za-z0-9_]*)/([A-Za-z0-9][A-Za-z0-9._-]*)#',$contents,$uns,PREG_SET_ORDER) ) {
+  if ( preg_match_all('#\$(?:\{[A-Za-z_][A-Za-z0-9_]*(?::?[-?+][^}]*)?\}|[A-Za-z_][A-Za-z0-9_]*)/([A-Za-z0-9][A-Za-z0-9._-]*)#',$contents,$uns,PREG_SET_ORDER) ) {
     foreach ( $uns as $uh ) {
       foreach ( $roots as $r ) if ( @is_dir($r."/".$uh[1]) ) foreach ( appdataCleanupNgPathViews($r."/".$uh[1]) as $c ) $protected[$c] = true;
     }

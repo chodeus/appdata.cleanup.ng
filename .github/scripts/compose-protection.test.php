@@ -73,6 +73,9 @@ $cases = array(
   ), array("crlf", "crlf2"), false),
   "a one-line list bind on another pool" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes: [\"/mnt/nvme/appdata/flowabs:/config\", /mnt/nvme/appdata/flowabs2:/y]\n"), array("flowabs", "flowabs2"), false),
   "a one-line map bind on another pool" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - {type: bind, source: /mnt/nvme/appdata/flowmap, target: /x}\n"), array("flowmap"), false),
+  "an unset variable with :? in a short bind" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${NOPE:?set it}/x:/config\n"), array(), true),
+  "a :? variable that is set" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${SETV:?missing}/qset:/config\n", "$projects/p/.env" => "SETV=/mnt/user/appdata\n"), array("qset"), false),
+  "a :+ alternative" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${SETV:+/mnt/nvme/appdata/plusalt}:/config\n", "$projects/p/.env" => "SETV=1\n"), array("plusalt"), false),
   "an unset variable in a one-line list" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes: [\"\${NOPE}/flowvar:/config\"]\n"), array(), true),
   "an unset variable in a one-line map" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - {type: bind, source: \${NOPE}/x, target: /x}\n"), array(), true),
   "an unset variable led by - source" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - source: \${APPDIR}\n        target: /config\n        type: bind\n"), array(), true),
@@ -143,6 +146,16 @@ check("ignore: a second writer waits for the lock", strpos(file_get_contents($ig
 flock($lock, LOCK_UN);
 proc_close($writer);
 check("ignore: and then writes", strpos(file_get_contents($ignore), "$appdata/four") !== false, file_get_contents($ignore));
+
+// A list that is there but can't be read is never replaced: a nobody process changes a root-only list in a world-writable folder
+file_put_contents($ignore, "$appdata/keepme\n");
+chmod($ignore, 0600); chmod(dirname($ignore), 0777); chmod(dirname($ignore) . "/ignore.lock", 0666);
+$child = proc_open(array(PHP_BINARY, "-r", "posix_setgid(65534); posix_setuid(65534); require " . var_export($helpers, true) . "; var_export(appdataCleanupNgAddIgnore('$appdata/new'));"), array(1 => array("pipe", "w")), $pipes);
+$said = stream_get_contents($pipes[1]);
+proc_close($child);
+clearstatcache();
+check("ignore: an unreadable list is left as it was", $said === "false" && file_get_contents($ignore) === "$appdata/keepme\n", $said . " " . json_encode(file_get_contents($ignore)));
+chmod(dirname($ignore), 0755);
 
 if ( $fail ) exit(1);
 echo "compose protection and ignore list tests passed (" . count($cases) . " compose cases)\n";
