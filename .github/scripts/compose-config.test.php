@@ -149,6 +149,16 @@ $protected = appdataCleanupNgComposeReferencedPaths($uncertain, $rootBound);
 foreach ( array("incv2", "incfile2", "incenv2") as $folder ) check("include files in appdata: protects $folder", in_array("$A/$folder", $protected, true), json_encode(array($uncertain, $protected)));
 check("a stack without a whole-root bind leaves the scan on", $rootBound === false);
 
+// An include inside an include, and an env file whose path has a space (the /mnt scan stops at the space)
+fresh();
+put("$P/docker-compose.yml", "include:\n  - /mnt/user/appdata/inca/a.yml\nservices:\n  w:\n    image: alpine\n    env_file:\n      - /mnt/user/appdata/env dir/app.env\n");
+put("$A/inca/a.yml", "include:\n  - ../incb/b.yml\nservices:\n  a:\n    image: alpine\n");
+put("$A/incb/b.yml", "services:\n  b:\n    image: alpine\n");
+put("$A/env dir/app.env", "Z=1\n");
+$uncertain = null;
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+foreach ( array("inca", "incb", "env dir") as $folder ) check("nested include and spaced env file: protects $folder", $uncertain === false && in_array("$A/$folder", $protected, true), json_encode(array($uncertain, $protected)));
+
 // An unset variable outside any path doesn't block deletes, and the stack's binds stay protected
 fresh();
 put("$P/docker-compose.yml", "services:\n  app:\n    image: alpine\n    environment:\n      TZ: \${TZ}\n    volumes:\n      - /mnt/user/appdata/tzapp:/config\n");
@@ -180,6 +190,7 @@ check("a service named target: its path protected", $uncertain === false && in_a
 // Compose can't read it: fail closed
 $unreadable = array(
   "an unset variable" => "services:\n  app:\n    image: alpine\n    volumes:\n      - \${NOPE}/x:/config\n",
+  "an unset variable inside a path" => "services:\n  app:\n    image: alpine\n    volumes:\n      - /mnt/user/appdata/\${NOPE}:/config\n",
   "invalid yaml" => "services:\n  app:\n    image: [alpine\n",
   "a remote include" => "include:\n  - https://github.com/docker/awesome-compose.git\nservices:\n  app:\n    image: alpine\n",
 );
