@@ -40,7 +40,7 @@ case 'getOrphanAppdata':
 		$o = readXmlFile($xmlfile);
 		if ( !$o ) continue;
 		if ( ! isset($o['Config']) || ! is_array($o['Config']) ) continue;
-		# one <Config> arrives as a record rather than a list (same normalisation as appdataCleanupNgStaleTemplates)
+		# one <Config> arrives as a record rather than a list (same normalisation as appdataCleanupNgTemplateAppdata)
 		$configs = isset($o['Config'][0]) ? $o['Config'] : array($o['Config']);
 
 		foreach ($configs as $volumeArray) {

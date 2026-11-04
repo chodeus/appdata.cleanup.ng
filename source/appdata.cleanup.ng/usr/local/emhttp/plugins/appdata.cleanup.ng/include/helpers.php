@@ -319,6 +319,26 @@ function appdataCleanupNgTemplateDir() {
   return "/boot/config/plugins/dockerMan/templates-user";
 }
 
+# a template <Config> that is a path under appdata: [appdata folder, host path, is it /config]; null otherwise
+function appdataCleanupNgTemplatePath($v) {
+  if ( ! is_array($v) || ! isset($v['@attributes']) || ( $v['@attributes']['Type'] ?? '' ) !== "Path" ) return null;
+  $s = appdataCleanupNgOwnerSegment($v['value'] ?? '');
+  return $s === "" ? null : array($s,$v['value'],appdataCleanupNgIsConfigTarget($v['@attributes']['Target'] ?? ''));
+}
+
+# [appdata folder, host path] a template uses: its /config path, else its first path under appdata; ["",""] when none
+function appdataCleanupNgTemplateAppdata($o) {
+  $cfgs = ( isset($o['Config']) && is_array($o['Config']) ) ? $o['Config'] : array();
+  if ( $cfgs && ! isset($cfgs[0]) ) $cfgs = array($cfgs);   # one <Config> arrives as a record rather than a list
+  $first = array("","");
+  foreach ( $cfgs as $v ) {
+    $path = appdataCleanupNgTemplatePath($v);
+    if ( $path === null ) continue;
+    if ( $path[2] ) return array($path[0],$path[1]);
+    if ( $first[0] === "" ) $first = array($path[0],$path[1]);
+  }
+  return $first;
+}
 function appdataCleanupNgStaleTemplates($installedNames) {
   if ( ! function_exists("readXmlFile") ) return array();
   $inst = array();
@@ -329,17 +349,7 @@ function appdataCleanupNgStaleTemplates($installedNames) {
     if ( ! $o || empty($o['Name']) ) continue;
     $name = (string)$o['Name'];
     if ( isset($inst[strtolower(trim($name))]) ) continue;   # container installed -> not stale
-    $seg = ""; $appdata = "";
-    if ( isset($o['Config']) && is_array($o['Config']) ) {
-      $cfgs = isset($o['Config'][0]) ? $o['Config'] : array($o['Config']);
-      foreach ( $cfgs as $v ) {
-        if ( ! is_array($v) || ! isset($v['@attributes']) || ( $v['@attributes']['Type'] ?? '' ) !== "Path" ) continue;
-        $s = appdataCleanupNgOwnerSegment($v['value'] ?? '');
-        if ( $s === "" ) continue;
-        if ( appdataCleanupNgIsConfigTarget($v['@attributes']['Target'] ?? '') ) { $seg = $s; $appdata = $v['value']; break; }
-        if ( $seg === "" ) { $seg = $s; $appdata = $v['value']; }
-      }
-    }
+    list($seg,$appdata) = appdataCleanupNgTemplateAppdata($o);
     $stale[] = array("name"=>$name,"file"=>$f,"seg"=>$seg,"appdata"=>$appdata);
   }
   return $stale;
@@ -411,15 +421,28 @@ function appdataCleanupNgSizeCacheFile() {
 }
 
 # du -sb, cached keyed by mtime so repeat scans don't re-walk unchanged folders
+# the size cache, or empty when there is none or it is a link
+function appdataCleanupNgReadSizeCache($cacheFile) {
+  if ( $cacheFile === "" || ! is_file($cacheFile) || is_link($cacheFile) ) return array();
+  $decoded = @json_decode(@file_get_contents($cacheFile),true);
+  return is_array($decoded) ? $decoded : array();
+}
+# Write a fresh private file and rename over the target: rename replaces a planted
+# symlink instead of writing through it, so there is no check-then-write window.
+function appdataCleanupNgWriteSizeCache($cacheFile,$cache) {
+  $tmp = $cacheFile.".".getmypid().".tmp";
+  $json = json_encode($cache);
+  $fh = ( $json !== false ) ? @fopen($tmp,"x") : false;
+  $ok = ( $fh !== false ) && ( @fwrite($fh,$json) === strlen($json) );
+  if ( $fh !== false ) $ok = ( @fclose($fh) && $ok );
+  # rename only a complete 0600 file; on any failure the existing cache stays as it was
+  if ( ! $ok || ! @chmod($tmp,0600) || ! @rename($tmp,$cacheFile) ) @unlink($tmp);
+}
 function appdataCleanupNgFolderSizeBytes($path) {
   $real = @realpath($path);
   if ( $real === false || ! is_dir($real) ) return -1;
   $cacheFile = appdataCleanupNgSizeCacheFile();
-  $cache = array();
-  if ( $cacheFile !== "" && is_file($cacheFile) && ! is_link($cacheFile) ) {
-    $decoded = @json_decode(@file_get_contents($cacheFile),true);
-    if ( is_array($decoded) ) $cache = $decoded;
-  }
+  $cache = appdataCleanupNgReadSizeCache($cacheFile);
   $mtime = @filemtime($real);
   if ( isset($cache[$real]) && is_array($cache[$real]) && (int)$cache[$real][0] === (int)$mtime ) {
     return (int)$cache[$real][1];
@@ -429,15 +452,7 @@ function appdataCleanupNgFolderSizeBytes($path) {
   $bytes = ( $rc === 0 && ! empty($out) ) ? (int)strtok(trim($out[0]),"\t ") : -1;
   if ( $bytes >= 0 && $cacheFile !== "" ) {
     $cache[$real] = array((int)$mtime,$bytes);
-    # Write a fresh private file and rename over the target: rename replaces a planted
-    # symlink instead of writing through it, so there is no check-then-write window.
-    $tmp = $cacheFile.".".getmypid().".tmp";
-    $json = json_encode($cache);
-    $fh = ( $json !== false ) ? @fopen($tmp,"x") : false;
-    $ok = ( $fh !== false ) && ( @fwrite($fh,$json) === strlen($json) );
-    if ( $fh !== false ) $ok = ( @fclose($fh) && $ok );
-    # rename only a complete 0600 file; on any failure the existing cache stays as it was
-    if ( ! $ok || ! @chmod($tmp,0600) || ! @rename($tmp,$cacheFile) ) @unlink($tmp);
+    appdataCleanupNgWriteSizeCache($cacheFile,$cache);
   }
   return $bytes;
 }

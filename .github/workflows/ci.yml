@@ -34,6 +34,22 @@ jobs:
       - name: Every plugin function called is defined
         run: php .github/scripts/check-plugin-functions.php source
 
+      # Community Applications' shipped package (readXmlFile), pinned by commit and md5
+      - name: Fetch the template reader
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/ca.txz" https://raw.githubusercontent.com/unraid/community.applications/e8472f00df8a677f2f39b28e9e7bf8b0a2fe5de5/archive/community.applications-2026.07.21-x86_64-1.txz
+          echo "6c324a04c1403180c233eb74675b2e20  $RUNNER_TEMP/ca.txz" | md5sum -c -
+          mkdir -p .ca-reader
+          tar -xJf "$RUNNER_TEMP/ca.txz" -C .ca-reader usr/local/emhttp/plugins/community.applications/include/helpers.php
+
+      - name: Stale templates and folder sizes
+        uses: docker://php:8.2-cli@sha256:a76ea7d3dd8f65eefff85e9c883f4d146808e0075c30ae6bccbb2a3753d373b8
+        env:
+          ACNG_TEST_CA_HELPERS: .ca-reader/usr/local/emhttp/plugins/community.applications/include/helpers.php
+        with:
+          entrypoint: php
+          args: .github/scripts/stale-and-size.test.php
+
       - name: Validate plugin manifest (XML)
         run: xmllint --noout plugins/appdata.cleanup.ng.plg
 
