@@ -162,8 +162,7 @@ function appdataCleanupNgViewKey($path) {
   $p = preg_replace('#/\.$#','',$p);
   # collapse any pool/array-disk mount to its /mnt/user view so the same folder compares equal regardless of pool; skip mounts that are genuinely not the user share
   if ( preg_match('#^/mnt/([^/]+)(/.*)?$#',$p,$m) ) {
-    $skip = array("user","user0","disks","remotes","rootsharecache","addons",".","..");
-    if ( ! in_array($m[1],$skip,true) ) {
+    if ( ! in_array($m[1],appdataCleanupNgNotShareMounts(),true) ) {
       $p = "/mnt/user".(isset($m[2]) ? $m[2] : "");
     }
   }
@@ -198,20 +197,21 @@ function appdataCleanupNgZfsDatasetMap() {
   if ( $map !== null ) return $map;
   if ( ! appdataCleanupNgZfsAvailable() ) return array();
   $out = array(); $rc = 1;
-  @exec("zfs list -H -o name,mountpoint -t filesystem 2>/dev/null",$out,$rc);
+  @exec("zfs list -H -o name,mounted,mountpoint -t filesystem 2>/dev/null",$out,$rc);
   if ( $rc !== 0 ) return array();
   $map = array();
   foreach ( $out as $line ) {
-    $parts = preg_split('/\t+/',rtrim($line,"\n"));
-    if ( count($parts) < 2 ) continue;
+    $parts = explode("\t",rtrim($line,"\n"),3);
+    # an unmounted dataset (a received replica, canmount=noauto) holds none of what is at its mountpoint
+    if ( count($parts) < 3 || $parts[1] !== "yes" ) continue;
     $name = trim($parts[0]);
-    $mp = appdataCleanupNgPhysical($parts[1]);
+    $mp = appdataCleanupNgPhysical($parts[2]);
     if ( $name !== "" && $mp !== "" && $mp[0] === "/" ) $map[$mp] = $name;
   }
   return $map;
 }
 
-# the dataset mounted exactly at this folder; through /mnt/user, the one mounted at it on any pool (none when two are)
+# the dataset mounted exactly at this folder; through /mnt/user, the one mounted at it when the folder has no other copy
 function appdataCleanupNgResolveZfsDataset($path) {
   $map = appdataCleanupNgZfsDatasetMap();
   if ( empty($map) ) return "";
@@ -224,10 +224,26 @@ function appdataCleanupNgResolveZfsDataset($path) {
   foreach ( $variants as $v ) {
     if ( strpos($v,"/mnt/user/") !== 0 ) continue;   # a pool or disk path means that place only
     $hits = array();
-    foreach ( $map as $mp => $name ) if ( appdataCleanupNgViewKey($mp) === $v ) $hits[] = $name;
-    if ( count($hits) === 1 ) return $hits[0];
+    foreach ( $map as $mp => $name ) if ( appdataCleanupNgViewKey($mp) === $v ) $hits[$mp] = $name;
+    # destroying the dataset would leave a copy on another pool or disk, so the mount checks refuse it instead
+    if ( count($hits) === 1 && count(appdataCleanupNgFolderCopies($v)) === 1 ) return reset($hits);
   }
   return "";
+}
+
+# entries under /mnt that are not a pool or array disk holding share folders
+function appdataCleanupNgNotShareMounts() {
+  return array("user","user0","disks","remotes","rootsharecache","addons",".","..");
+}
+
+# where a /mnt/user folder physically is: the same path on each pool and array disk that has it
+function appdataCleanupNgFolderCopies($userPath,$mnt="/mnt") {
+  $rest = substr($userPath,strlen("/mnt/user"));
+  $copies = array();
+  foreach ( (array)@scandir($mnt) as $e ) {
+    if ( ! in_array($e,appdataCleanupNgNotShareMounts(),true) && is_dir($mnt."/".$e.$rest) ) $copies[] = $mnt."/".$e.$rest;
+  }
+  return $copies;
 }
 
 # filesystems a delete of $dir would reach: mounted inside it, and through /mnt/user also on any pool or disk at or

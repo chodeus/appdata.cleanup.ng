@@ -1,5 +1,7 @@
 <?php
-// What a delete can reach: appdataCleanupNgZfsDestroy() with a fake zfs first on PATH, and nested mounts.
+// What a delete can reach: appdataCleanupNgZfsDestroy() with a fake zfs first on PATH, nested mounts, and datasets.
+// It creates folders under /mnt, so it runs only in a throwaway container: docker run ... php:8.2-cli
+if ( ! is_file("/.dockerenv") ) { fwrite(STDERR, "refusing to run outside a container: this test writes /mnt\n"); exit(2); }
 $helpers = $argv[1] ?? __DIR__ . "/../../source/appdata.cleanup.ng/usr/local/emhttp/plugins/appdata.cleanup.ng/include/helpers.php";
 require $helpers;
 
@@ -92,7 +94,11 @@ file_put_contents("$bin/short", "36 25 0:30 /\n");
 check("mounts inside, malformed row", appdataCleanupNgMountsInside("/mnt/cache/appdata/app", "$bin/short") === null);
 
 // The dataset a folder resolves to: its own mountpoint exactly, or through /mnt/user the only one at that folder
-putenv("FAKE_LIST=" . "cache/appdata/app\\t/mnt/cache/appdata/app\\nfast/appdata/app\\t/mnt/fast/appdata/app\\ncache/appdata/solo\\t/mnt/cache/appdata/solo\\n");
+putenv("FAKE_LIST=" . implode('\\n', array(
+  "cache/appdata/app\\tyes\\t/mnt/cache/appdata/app", "fast/appdata/app\\tyes\\t/mnt/fast/appdata/app",
+  "cache/appdata/solo\\tyes\\t/mnt/cache/appdata/solo", "fast/appdata/old\\tno\\t/mnt/fast/appdata/old",
+  "cache/appdata/split\\tyes\\t/mnt/cache/appdata/split")) . '\\n');
+foreach ( array("cache/appdata/solo", "fast/appdata/old", "cache/appdata/split", "disk1/appdata/split") as $dir ) @mkdir("/mnt/$dir", 0755, true);
 putenv("FAKE_LIST_FAIL=0");
 $resolves = array(
   "/mnt/cache/appdata/app"  => "cache/appdata/app",
@@ -101,6 +107,9 @@ $resolves = array(
   "/mnt/user/appdata/app"   => "",
   "/mnt/user/appdata/solo"  => "cache/appdata/solo",
   "/mnt/disk1/appdata/solo" => "",
+  "/mnt/user/appdata/old"   => "",   // an unmounted replica holds none of the folder
+  "/mnt/fast/appdata/old"   => "",
+  "/mnt/user/appdata/split" => "",   // destroying the dataset would leave the disk1 copy
 );
 foreach ( $resolves as $path => $dataset ) {
   $got = appdataCleanupNgResolveZfsDataset($path);
