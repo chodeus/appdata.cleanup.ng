@@ -161,12 +161,18 @@ function appdataCleanupNgCanon($path) {
 }
 
 function appdataCleanupNgOwnerSegment($path) {
+  $folder = appdataCleanupNgAppdataFolderOf($path);
+  return $folder === "" ? "" : basename($folder);
+}
+
+# the appdata folder (<root>/<first segment>) a path lies in, canonical; "" when it is outside every root or is a root
+function appdataCleanupNgAppdataFolderOf($path) {
   $c = appdataCleanupNgCanon($path);
   foreach ( appdataCleanupNgAppdataRoots() as $root ) {
     $r = appdataCleanupNgCanon($root);
     if ( $r !== "" && strpos($c."/",$r."/") === 0 && strlen($c) > strlen($r) ) {
       $seg = strtok(ltrim(substr($c,strlen($r)),"/"),"/");
-      return $seg === false ? "" : $seg;
+      return ( $seg === false || $seg === "" ) ? "" : $r."/".$seg;
     }
   }
   return "";
@@ -250,7 +256,11 @@ function appdataCleanupNgIgnoreFile() {
 
 function appdataCleanupNgIgnoreList() {
   static $list = null;
-  if ( $list !== null ) return $list;
+  if ( $list === null ) $list = appdataCleanupNgReadIgnoreList();
+  return $list;
+}
+
+function appdataCleanupNgReadIgnoreList() {
   $list = array();
   $f = appdataCleanupNgIgnoreFile();
   if ( is_file($f) ) {
@@ -267,31 +277,34 @@ function appdataCleanupNgIsIgnored($path) {
   return isset($list[appdataCleanupNgCanon($path)]);
 }
 
-function appdataCleanupNgWriteIgnoreList($list) {
+# one change at a time, read fresh under the lock, and written whole: a crash leaves the old list or the new one
+function appdataCleanupNgUpdateIgnoreList($change) {
   $f = appdataCleanupNgIgnoreFile();
   $dir = dirname($f);
   if ( ! is_dir($dir) ) @mkdir($dir,0755,true);
+  $lock = @fopen($dir."/ignore.lock","c");
+  if ( $lock === false ) return false;
+  if ( ! flock($lock,LOCK_EX) ) { fclose($lock); return false; }
+  $list = appdataCleanupNgReadIgnoreList();
+  $change($list);
   $body = empty($list) ? "" : implode("\n",array_keys($list))."\n";
-  @file_put_contents($f,$body,LOCK_EX);
+  $tmp = $f.".tmp".getmypid();
+  $ok = @file_put_contents($tmp,$body) === strlen($body) && @rename($tmp,$f);
+  if ( ! $ok ) @unlink($tmp);
+  flock($lock,LOCK_UN);
+  fclose($lock);
+  return $ok;
 }
 
 function appdataCleanupNgAddIgnore($path) {
   if ( ! appdataCleanupNgPathWithinAppdata($path) ) return false;
   $c = appdataCleanupNgCanon($path);
-  $list = appdataCleanupNgIgnoreList();
-  if ( isset($list[$c]) ) return true;
-  $list[$c] = true;
-  appdataCleanupNgWriteIgnoreList($list);
-  return true;
+  return appdataCleanupNgUpdateIgnoreList(function(&$list) use ($c) { $list[$c] = true; });
 }
 
 function appdataCleanupNgRemoveIgnore($path) {
   $c = appdataCleanupNgCanon($path);
-  $list = appdataCleanupNgIgnoreList();
-  if ( ! isset($list[$c]) ) return true;
-  unset($list[$c]);
-  appdataCleanupNgWriteIgnoreList($list);
-  return true;
+  return appdataCleanupNgUpdateIgnoreList(function(&$list) use ($c) { unset($list[$c]); });
 }
 
 # opt-in scan: top-level appdata folders not accounted for by any template, container, or compose stack (less conservative than template-only)
@@ -478,6 +491,62 @@ function appdataCleanupNgExpandEnv($text,$env) {
   return $text;
 }
 
+# [compose source folder, compose files, env vars] as Compose Manager runs the project (indirect file or folder,
+# extra_compose_files, COMPOSE_FILE, envpath); null when its compose location can't be read, so callers fail closed
+function appdataCleanupNgComposeProject($proj) {
+  if ( file_exists($proj."/indirect.invalid") ) return null;   # a broken target kept for repair
+  $source = $proj;
+  $files = array();
+  if ( file_exists($proj."/indirect") || is_link($proj."/indirect") ) {
+    $target = is_file($proj."/indirect") ? rtrim(trim((string)@file_get_contents($proj."/indirect")),"/") : "";
+    $mode = is_file($proj."/indirect_mode") ? strtolower(trim((string)@file_get_contents($proj."/indirect_mode"))) : "";
+    if ( $target === "" || $target[0] !== "/" || ! in_array($mode,array("","file","folder"),true) ) return null;
+    if ( $mode === "file" || is_file($target) ) {
+      if ( ! is_file($target) || ! is_readable($target) ) return null;
+      $files[] = $target;
+      $source = dirname($target);
+    } else {
+      if ( ! is_dir($target) || ! is_readable($target) ) return null;
+      $source = $target;
+    }
+  }
+  # cover modern (compose.yaml) and legacy (docker-compose.yml) names + overrides, in source and project dirs
+  foreach ( array("compose","docker-compose","compose.override","docker-compose.override") as $n ) {
+    foreach ( array("yaml","yml") as $ext ) $files[] = $source."/".$n.".".$ext;
+  }
+  foreach ( array("compose.override","docker-compose.override") as $n ) {
+    foreach ( array("yaml","yml") as $ext ) $files[] = $proj."/".$n.".".$ext;
+  }
+  # the one env file compose gets: envpath (absolute, or relative to the project folder), else the default for the stack
+  $envFile = "";
+  $envPath = is_file($proj."/envpath") ? trim((string)@file_get_contents($proj."/envpath")) : "";
+  if ( $envPath !== "" ) {
+    foreach ( array($envPath, $envPath[0] === "/" ? "" : $proj."/".$envPath) as $candidate ) {
+      if ( $candidate !== "" && is_file($candidate) ) { $envFile = $candidate; break; }
+    }
+  }
+  $git = is_file($proj."/git.json");
+  $default = ( $git && is_file($proj."/.env") ) ? $proj."/.env" : $source."/.env";
+  if ( $envFile === "" && is_file($default) ) $envFile = $default;
+  # it wins; the other .env files only resolve what it leaves unset, which can only add protection
+  $env = array();
+  foreach ( array_unique(array_filter(array($envFile,$source."/.env",$proj."/.env"))) as $e ) appdataCleanupNgParseEnvFile($e,$env);
+  # more compose files: COMPOSE_FILE in that env file (relative to it), and extra_compose_files (relative to the source)
+  $composeEnv = array();
+  if ( $envFile !== "" ) appdataCleanupNgParseEnvFile($envFile,$composeEnv);
+  if ( isset($composeEnv['COMPOSE_FILE']) && trim($composeEnv['COMPOSE_FILE']) !== "" ) {
+    foreach ( preg_split('/[:;]/',$composeEnv['COMPOSE_FILE']) as $extra ) {
+      $extra = trim($extra);
+      if ( $extra !== "" ) $files[] = $extra[0] === "/" ? $extra : dirname($envFile)."/".$extra;
+    }
+  }
+  foreach ( (array)( is_file($proj."/extra_compose_files") ? @file($proj."/extra_compose_files",FILE_IGNORE_NEW_LINES) : array() ) as $extra ) {
+    $extra = trim($extra);
+    if ( $extra !== "" && $extra[0] !== "#" ) $files[] = $extra[0] === "/" ? $extra : $source."/".$extra;
+  }
+  return array(rtrim($source,"/"),array_values(array_unique($files)),$env);
+}
+
 function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
   $uncertain = false;   # set true when a compose file can't be read or still has an unresolved ${VAR} bind host -> callers must fail closed
   $projectsDir = "/boot/config/plugins/compose.manager/projects";
@@ -497,25 +566,12 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
 
   $protected = array();
   foreach ( (array)glob($projectsDir."/*",GLOB_ONLYDIR) as $proj ) {
-    $base = $proj;
-    if ( is_file($proj."/indirect") ) {
-      $indirect = trim((string)@file_get_contents($proj."/indirect"));
-      if ( $indirect !== "" ) $base = rtrim($indirect,"/");
-    }
-    # docker compose resolves ${VAR} from a .env in the compose-file (working) dir first
-    $env = array();
-    appdataCleanupNgParseEnvFile($base."/.env",$env);
-    appdataCleanupNgParseEnvFile($proj."/.env",$env);
-    # cover modern (compose.yaml) and legacy (docker-compose.yml) names + overrides, in base and project dirs
-    $files = array(
-      $base."/compose.yaml",$base."/compose.yml",
-      $base."/docker-compose.yaml",$base."/docker-compose.yml",
-      $base."/compose.override.yaml",$base."/compose.override.yml",
-      $base."/docker-compose.override.yaml",$base."/docker-compose.override.yml",
-      $proj."/compose.override.yaml",$proj."/compose.override.yml",
-      $proj."/docker-compose.override.yaml",$proj."/docker-compose.override.yml"
-    );
-    $files = array_values(array_unique($files));
+    $project = appdataCleanupNgComposeProject($proj);
+    if ( $project === null ) { $uncertain = true; continue; }
+    list($base,$files,$env) = $project;
+    # the stack's own folder holds its compose file and .env, even when no bind names it
+    $home = appdataCleanupNgAppdataFolderOf($base);
+    if ( $home !== "" ) foreach ( appdataCleanupNgPathViews($home) as $c ) $protected[$c] = true;
     foreach ( $files as $f ) {
       if ( ! is_file($f) ) continue;
       $contents = @file_get_contents($f);
@@ -538,6 +594,17 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
             $uncertain = true;
             break;
           }
+        }
+      }
+      # included or extended files are not read here, so their binds would go unprotected
+      if ( preg_match('#^[ \t]*["\']?(?:include|extends)["\']?[ \t]*:#m',$contents) ) $uncertain = true;
+      # relative bind hosts (./data) resolve against the project folder, the compose source
+      if ( preg_match_all('#^[ \t]*(?:-|source[ \t]*:)[ \t]*["\']?(\.\.?(?=[/:"\'\s]|$)[^\n:"\']*)#m',$contents,$rel,PREG_SET_ORDER) ) {
+        foreach ( $rel as $h ) {
+          $host = rtrim($h[1],"/");
+          if ( appdataCleanupNgHasControlChars($host) || preg_match('#(^|/)\.\.(/|$)#',$host) ) { $uncertain = true; continue; }
+          $folder = appdataCleanupNgAppdataFolderOf($base.substr($host,1));
+          if ( $folder !== "" ) foreach ( appdataCleanupNgPathViews($folder) as $c ) $protected[$c] = true;
         }
       }
       if ( preg_match_all($pattern,$contents,$matches,PREG_SET_ORDER) ) {

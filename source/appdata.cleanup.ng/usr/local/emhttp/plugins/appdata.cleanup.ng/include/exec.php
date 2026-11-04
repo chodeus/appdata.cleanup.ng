@@ -167,7 +167,7 @@ case 'getOrphanAppdata':
       }
     }
     if ( $composeUncertain ) {
-      $fsScanSkipped = "A Docker Compose stack references an unresolved \${VAR} host path, so the scan can't tell which folders are in use. Define it in the project .env to enable the scan.";
+      $fsScanSkipped = "A Docker Compose stack can't be fully read (an unresolved \${VAR} or ../ host path, an include or extends, or a compose location that is missing or unreadable), so the scan can't tell which folders are in use. Check the stacks in Compose Manager.";
     } else if ( $rootMounted ) {
       $fsScanSkipped = "A container (running or stopped) bind-mounts an entire appdata root, so every folder is in use. The filesystem scan is disabled to avoid offering in-use folders.";
     } else {
