@@ -115,7 +115,15 @@ check("mounts inside, malformed row", appdataCleanupNgMountsInside("/mnt/cache/a
 putenv("FAKE_LIST=" . implode('\\n', array(
   "cache/appdata/app\\tyes\\t/mnt/cache/appdata/app", "fast/appdata/app\\tyes\\t/mnt/fast/appdata/app",
   "cache/appdata/solo\\tyes\\t/mnt/cache/appdata/solo", "fast/appdata/old\\tno\\t/mnt/fast/appdata/old",
-  "cache/appdata/split\\tyes\\t/mnt/cache/appdata/split")) . '\\n');
+  "cache/appdata/split\\tyes\\t/mnt/cache/appdata/split", "cache/appdata/moved\\tyes\\t/mnt/cache/appdata/moved")) . '\\n');
+$live = "$bin/resolve-mountinfo";
+file_put_contents($live, implode("\n", array(
+  "36 25 0:30 / /mnt/cache/appdata/app rw - zfs cache/appdata/app rw",
+  "37 25 0:31 / /mnt/fast/appdata/app rw - zfs fast/appdata/app rw",
+  "38 25 0:32 / /mnt/cache/appdata/solo rw - zfs cache/appdata/solo rw",
+  "39 25 0:33 / /mnt/cache/appdata/split rw - zfs cache/appdata/split rw",
+  "40 25 0:34 / /mnt/cache/appdata/before rw - zfs cache/appdata/moved rw",   // renamed with -u: still mounted at the old path
+)) . "\n");
 foreach ( array("cache/appdata/solo", "fast/appdata/old", "cache/appdata/split", "disk1/appdata/split") as $dir ) @mkdir("/mnt/$dir", 0755, true);
 putenv("FAKE_LIST_FAIL=0");
 $resolves = array(
@@ -128,12 +136,16 @@ $resolves = array(
   "/mnt/user/appdata/old"   => "",   // an unmounted replica holds none of the folder
   "/mnt/fast/appdata/old"   => "",
   "/mnt/user/appdata/split" => "",   // destroying the dataset would leave the disk1 copy
+  "/mnt/cache/appdata/moved" => "",  // its mountpoint property, where it isn't mounted
+  "/mnt/cache/appdata/before" => "", // where it is mounted, which the rm branch refuses as a mount point
 );
 foreach ( $resolves as $path => $dataset ) {
-  $got = appdataCleanupNgResolveZfsDataset($path);
+  $got = appdataCleanupNgResolveZfsDataset($path, $live);
   check("dataset for '$path'", $got === $dataset, json_encode($got));
 }
 
-@unlink($log); @unlink($table); @unlink("$bin/empty"); @unlink("$bin/short"); @unlink("$bin/zfs"); @rmdir($bin);
+check("dataset with an unreadable mount table: none", appdataCleanupNgResolveZfsDataset("/mnt/cache/appdata/app", "$bin/missing") === "");
+
+@unlink($log); @unlink($table); @unlink($live); @unlink("$bin/empty"); @unlink("$bin/short"); @unlink("$bin/zfs"); @rmdir($bin);
 if ( $fail ) exit(1);
-echo "delete scope tests passed (" . (count($cases) + count($mounts) + count($resolves) + 4) . " cases)\n";
+echo "delete scope tests passed (" . (count($cases) + count($mounts) + count($resolves) + 5) . " cases)\n";

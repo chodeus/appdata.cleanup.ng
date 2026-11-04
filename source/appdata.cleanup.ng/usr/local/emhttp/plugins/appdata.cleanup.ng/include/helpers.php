@@ -192,10 +192,13 @@ function appdataCleanupNgZfsAvailable() {
   return true;
 }
 
-function appdataCleanupNgZfsDatasetMap() {
-  static $map = null;
-  if ( $map !== null ) return $map;
-  if ( ! appdataCleanupNgZfsAvailable() ) return array();
+# mounted datasets keyed by mountpoint, kept only where the mount table shows them: after zfs rename -u the
+# property names a path the dataset isn't mounted at. Empty when the mount table can't be read.
+function appdataCleanupNgZfsDatasetMap($mountinfo="/proc/self/mountinfo") {
+  static $maps = array();
+  if ( isset($maps[$mountinfo]) ) return $maps[$mountinfo];
+  $live = appdataCleanupNgZfsAvailable() ? appdataCleanupNgZfsLiveMounts($mountinfo) : null;
+  if ( $live === null ) return array();
   $out = array(); $rc = 1;
   @exec("zfs list -H -o name,mounted,mountpoint -t filesystem 2>/dev/null",$out,$rc);
   if ( $rc !== 0 ) return array();
@@ -206,14 +209,14 @@ function appdataCleanupNgZfsDatasetMap() {
     if ( count($parts) < 3 || $parts[1] !== "yes" ) continue;
     $name = trim($parts[0]);
     $mp = appdataCleanupNgPhysical($parts[2]);
-    if ( $name !== "" && $mp !== "" && $mp[0] === "/" ) $map[$mp] = $name;
+    if ( $name !== "" && in_array($mp,$live[$name] ?? array(),true) ) $map[$mp] = $name;
   }
-  return $map;
+  return $maps[$mountinfo] = $map;
 }
 
 # the dataset mounted exactly at this folder; through /mnt/user, the one mounted at it when the folder has no other copy
-function appdataCleanupNgResolveZfsDataset($path) {
-  $map = appdataCleanupNgZfsDatasetMap();
+function appdataCleanupNgResolveZfsDataset($path,$mountinfo="/proc/self/mountinfo") {
+  $map = appdataCleanupNgZfsDatasetMap($mountinfo);
   if ( empty($map) ) return "";
   $variants = array(appdataCleanupNgPhysical($path));
   $rp = @realpath($path);
