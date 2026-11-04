@@ -42,6 +42,9 @@ $cases = array(
   "child inside the folder"  => array("1", $self . "cache/appdata/app/db\tfilesystem\tyes\t/mnt/cache/appdata/app/db\n", 0, "destroy -r cache/appdata/app", ""),
   "child under another pool" => array("1", $self . "cache/appdata/app/db\tfilesystem\tyes\t/mnt/backup/appdata/app/db\n", 0, "", "cache/appdata/app/db (mounted at /mnt/backup/appdata/app/db)"),
   "malformed child row"      => array("1", $self . "cache/appdata/app/db\tfilesystem\n", 0, "", "could not be checked"),
+  "child renamed with -u"    => array("1", $self . "cache/appdata/app/db\tfilesystem\tyes\t/mnt/cache/appdata/app/db\n", 0, "", "cache/appdata/app/db (mounted at /mnt/disk1/db)",
+    array("cache/appdata/app" => "/mnt/cache/appdata/app", "cache/appdata/app/db" => "/mnt/disk1/db")),
+  "parent not mounted now"   => array("1", $self, 0, "", "could not be checked", array()),
   "child mounted elsewhere"  => array("1", $self . "cache/appdata/app/db\tfilesystem\tyes\t/mnt/disk1/db\n", 0, "", "cache/appdata/app/db (mounted at /mnt/disk1/db)"),
   "child not mounted"        => array("1", $self . "cache/appdata/app/old\tfilesystem\tno\tnone\n", 0, "", "cache/appdata/app/old (not mounted)"),
   "child volume"             => array("1", $self . "cache/appdata/app/vm\tvolume\t-\t-\n", 0, "", "cache/appdata/app/vm (a volume)"),
@@ -54,7 +57,20 @@ foreach ( $cases as $name => $case ) {
   putenv("FAKE_DEPENDENTS=$dependents");
   putenv("FAKE_LIST=" . str_replace(array("\t", "\n"), array('\t', '\n'), $list));
   putenv("FAKE_LIST_FAIL=$listFail");
-  $r = appdataCleanupNgZfsDestroy("cache/appdata/app");
+  // the live mount table: each mounted filesystem row where its mountpoint says, unless the case says otherwise
+  $mounted = $case[5] ?? null;
+  if ( $mounted === null ) {
+    $mounted = array();
+    foreach ( explode("\n", trim($list)) as $row ) {
+      $f = explode("\t", $row);
+      if ( count($f) === 4 && $f[1] === "filesystem" && $f[2] === "yes" && $f[3][0] === "/" ) $mounted[$f[0]] = $f[3];
+    }
+  }
+  $mi = "$bin/live-mountinfo";
+  $n = 40;
+  file_put_contents($mi, "36 25 0:30 / / rw - ext4 /dev/root rw\n");
+  foreach ( $mounted as $ds => $at ) file_put_contents($mi, ($n++) . " 36 0:$n / " . str_replace(" ", "\\040", $at) . " rw - zfs " . str_replace(" ", "\\040", $ds) . " rw\n", FILE_APPEND);
+  $r = appdataCleanupNgZfsDestroy("cache/appdata/app", $mi);
   $ran = trim((string)@file_get_contents($log));
   check("$name: destroy command", $ran === $destroyed, "ran '" . $ran . "'");
   check("$name: result", $r['ok'] === ($destroyed !== ""), json_encode($r));
@@ -71,11 +87,13 @@ file_put_contents($table, implode("\n", array(
   "40 36 0:34 / /mnt/cache/appdata/application/x rw - zfs cache/appdata/application/x rw",
   "41 36 0:35 / /mnt/cache/appdata/my\\040app/cache rw - zfs cache/appdata/my_app/cache rw",
   "42 36 0:36 / /mnt/cache/appdata/app\\040/db rw - zfs cache/other rw",
+  "43 36 0:30 /appdata/media /mnt/cache/appdata/bound rw - zfs cache rw",
 )) . "\n");
 $mounts = array(
-  "a nested dataset"            => array("/mnt/cache/appdata/app", array("/mnt/cache/appdata/app/db")),
+  "a nested dataset"            => array("/mnt/cache/appdata/app", array("/mnt/cache/appdata/app", "/mnt/cache/appdata/app/db")),
   "the array-disk view"         => array("/mnt/user/appdata/arr", array("/mnt/disk1/appdata/arr/media")),
-  "a sibling with that prefix"  => array("/mnt/cache/appdata/app/db", array()),
+  "a sibling with that prefix"  => array("/mnt/cache/appdata/app/db", array("/mnt/cache/appdata/app/db")),
+  "a bind at the folder itself" => array("/mnt/cache/appdata/bound", array("/mnt/cache/appdata/bound")),
   "an escaped space"            => array("/mnt/cache/appdata/my app", array("/mnt/cache/appdata/my app/cache")),
   "the pool above it"           => array("/mnt/cache/appdata/other", array()),
   "a name ending in a space"    => array("/mnt/cache/appdata/app ", array("/mnt/cache/appdata/app /db")),
@@ -86,7 +104,7 @@ foreach ( $mounts as $name => $case ) {
   $got = appdataCleanupNgMountsInside($case[0], $table);
   check("mounts inside, $name", $got === $case[1], json_encode($got));
 }
-check("mounts inside, prefix is not a parent", appdataCleanupNgMountsInside("/mnt/cache/appdata/app", $table) === array("/mnt/cache/appdata/app/db"), "application/x must not count");
+check("mounts inside, prefix is not a parent", appdataCleanupNgMountsInside("/mnt/cache/appdata/app", $table) === array("/mnt/cache/appdata/app", "/mnt/cache/appdata/app/db"), "application/x must not count");
 check("mounts inside, unreadable table", appdataCleanupNgMountsInside("/mnt/cache/appdata/app", "$bin/missing") === null);
 file_put_contents("$bin/empty", "");
 check("mounts inside, empty table", appdataCleanupNgMountsInside("/mnt/cache/appdata/app", "$bin/empty") === null);

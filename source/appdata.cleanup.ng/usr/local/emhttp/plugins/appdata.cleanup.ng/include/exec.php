@@ -369,7 +369,7 @@ case "deleteAppdata":
     # rm -rf would also empty a filesystem mounted further inside (a child dataset, a bind mount)
     $inner = appdataCleanupNgMountsInside($real);
     if ( $inner === null || $inner ) {
-      $refused[] = $path.( $inner === null ? " (mount table unreadable)" : " (another filesystem is mounted inside it at ".substr(preg_replace('/[\x00-\x1f\x7f]+/'," ",$inner[0]),0,200)."; unmount or delete that first)" );
+      $refused[] = $path.( $inner === null ? " (mount table unreadable)" : " (another filesystem is mounted at or inside it, at ".substr(preg_replace('/[\x00-\x1f\x7f]+/'," ",$inner[0]),0,200)."; unmount or delete that first)" );
       continue;
     }
     $rmOut = array(); $rmRc = 1;
