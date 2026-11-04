@@ -78,6 +78,7 @@ $cases = array(
   "an unset variable led by - source" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - source: \${APPDIR}\n        target: /config\n        type: bind\n"), array(), true),
   "a missing compose file" => array(array("$projects/p/indirect" => "$appdata/gone/prod.yml", "$projects/p/indirect_mode" => "file"), array(), true),
   "a missing compose folder" => array(array("$projects/p/indirect" => "$appdata/gone"), array(), true),
+  "file mode naming a folder" => array(array("$projects/p/indirect" => "$appdata/home", "$projects/p/indirect_mode" => "file", "$appdata/home/docker-compose.yml" => "services: {}\n"), array(), true),
   "an unknown mode" => array(array("$projects/p/indirect" => "$appdata/home", "$projects/p/indirect_mode" => "weird", "$appdata/home/docker-compose.yml" => "services: {}\n"), array(), true),
   "a broken target kept for repair" => array(array("$projects/p/indirect.invalid" => "$appdata/old", "$projects/p/docker-compose.yml" => "services: {}\n"), array(), true),
   "a ../ bind" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - ../elsewhere:/config\n"), array(), true),
