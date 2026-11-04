@@ -71,6 +71,10 @@ $cases = array(
   "Windows line endings" => array(array(
     "$projects/p/indirect" => $appdata, "$appdata/docker-compose.yml" => "services:\r\n  app:\r\n    image: x\r\n    volumes:\r\n      - type: bind\r\n        source: ./crlf\r\n        target: /config\r\n      - /mnt/nvme/appdata/crlf2:/x\r\n",
   ), array("crlf", "crlf2"), false),
+  "a one-line list bind on another pool" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes: [\"/mnt/nvme/appdata/flowabs:/config\", /mnt/nvme/appdata/flowabs2:/y]\n"), array("flowabs", "flowabs2"), false),
+  "a one-line map bind on another pool" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - {type: bind, source: /mnt/nvme/appdata/flowmap, target: /x}\n"), array("flowmap"), false),
+  "an unset variable in a one-line list" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes: [\"\${NOPE}/flowvar:/config\"]\n"), array(), true),
+  "an unset variable in a one-line map" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - {type: bind, source: \${NOPE}/x, target: /x}\n"), array(), true),
   "an unset variable led by - source" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - source: \${APPDIR}\n        target: /config\n        type: bind\n"), array(), true),
   "a missing compose file" => array(array("$projects/p/indirect" => "$appdata/gone/prod.yml", "$projects/p/indirect_mode" => "file"), array(), true),
   "a missing compose folder" => array(array("$projects/p/indirect" => "$appdata/gone"), array(), true),

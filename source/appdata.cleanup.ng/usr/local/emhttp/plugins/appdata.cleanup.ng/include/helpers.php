@@ -588,15 +588,16 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
       },$contents);
       # a VOLUME BIND whose host side still has an unresolved ${VAR}/$VAR means we can't know which appdata folder it maps to.
       # scope to bind positions to avoid disabling fsscan on unrelated $VARs: short syntax "- ${VAR}/path:/container"
-      # (the [^\n:=] host guard excludes "KEY=val" environment items), and long syntax "source: ${VAR}...".
-      if ( preg_match('#^[ \t]*-[ \t]*["\']?[^\n:=]*\$\{?[A-Za-z_][^\n:]*:/#m',$contents)
-        || preg_match('#^[ \t]*(?:-[ \t]*)?source[ \t]*:[ \t]*["\']?[^\n]*\$[A-Za-z_{]#m',$contents) ) {
+      # (the [^\n:=] host guard excludes "KEY=val" environment items), and long syntax "source: ${VAR}...",
+      # each also inside a one-line list or map ("volumes: [${VAR}/x:/y]", "{type: bind, source: ${VAR}}")
+      if ( preg_match('#(?:^[ \t]*-|[\[,])[ \t]*["\']?[^\n:=,\]]*\$\{?[A-Za-z_][^\n:]*:/#m',$contents)
+        || preg_match('#(?:^[ \t]*(?:-[ \t]*)?|[{,][ \t]*)source[ \t]*:[ \t]*["\']?[^\n,}]*\$[A-Za-z_{]#m',$contents) ) {
         $uncertain = true;
       }
       # A bind host we cannot trust never matches the root pattern below, so it would be
       # silently unprotected. Check every bind host up front with the shared predicates.
-      # a quoted host may hold the other quote ("/x/Bob's app")
-      if ( preg_match_all('#^[ \t]*(?:-[ \t]*(?:source[ \t]*:)?|source[ \t]*:)[ \t]*(?:"(/[^\n:"]*)|\'(/[^\n:\']*)|(/[^\n:"\']*))#m',$contents,$hosts,PREG_SET_ORDER) ) {
+      # a quoted host may hold the other quote ("/x/Bob's app"); a one-line list or map holds binds too
+      if ( preg_match_all('#(?:^[ \t]*(?:-[ \t]*(?:source[ \t]*:)?|source[ \t]*:)|[\[,][ \t]*|[{,][ \t]*source[ \t]*:)[ \t]*(?:"(/[^\n:"]*)|\'(/[^\n:\']*)|(/[^\n:"\',\]}]*))#m',$contents,$hosts,PREG_SET_ORDER) ) {
         foreach ( $hosts as $h ) {
           # /mnt/user0 is the array-only view of the same share
           $host = preg_replace('#^/mnt/user0(?=/)#','/mnt/user',rtrim(($h[1] ?? "").($h[2] ?? "").($h[3] ?? ""),"/"));

@@ -306,10 +306,10 @@ case "deleteAppdata":
   $composeNow = array();
   $composeUncertainDel = false;
   foreach ( appdataCleanupNgComposeReferencedPaths($composeUncertainDel) as $cp ) $composeNow[$cp] = true;
-  # fail closed: an unreadable compose file or an unresolved ${VAR} host path means the
+  # fail closed: a stack that can't be fully read (see appdataCleanupNgComposeReferencedPaths) means the
   # protected set is incomplete, so we cannot prove a stopped stack is not being deleted
   if ( $composeUncertainDel ) {
-    appdataCleanupNgLog("deleteAppdata refused: compose protection incomplete (unreadable file or unresolved variable)",LOG_WARNING);
+    appdataCleanupNgLog("deleteAppdata refused: compose protection incomplete (a stack could not be fully read)",LOG_WARNING);
     echo "refused: compose protection is incomplete, so a stopped stack cannot be ruled out";
     break;
   }
