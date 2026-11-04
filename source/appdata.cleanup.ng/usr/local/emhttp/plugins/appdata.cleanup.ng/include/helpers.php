@@ -326,12 +326,16 @@ function appdataCleanupNgTemplatePath($v) {
   return $s === "" ? null : array($s,$v['value'],appdataCleanupNgIsConfigTarget($v['@attributes']['Target'] ?? ''));
 }
 
+# a template's <Config> entries as a list: one <Config> arrives as a record rather than a list
+function appdataCleanupNgTemplateConfigs($o) {
+  $cfgs = ( isset($o['Config']) && is_array($o['Config']) ) ? $o['Config'] : array();
+  return ( $cfgs && ! isset($cfgs[0]) ) ? array($cfgs) : $cfgs;
+}
+
 # [appdata folder, host path] a template uses: its /config path, else its first path under appdata; ["",""] when none
 function appdataCleanupNgTemplateAppdata($o) {
-  $cfgs = ( isset($o['Config']) && is_array($o['Config']) ) ? $o['Config'] : array();
-  if ( $cfgs && ! isset($cfgs[0]) ) $cfgs = array($cfgs);   # one <Config> arrives as a record rather than a list
   $first = array("","");
-  foreach ( $cfgs as $v ) {
+  foreach ( appdataCleanupNgTemplateConfigs($o) as $v ) {
     $path = appdataCleanupNgTemplatePath($v);
     if ( $path === null ) continue;
     if ( $path[2] ) return array($path[0],$path[1]);
