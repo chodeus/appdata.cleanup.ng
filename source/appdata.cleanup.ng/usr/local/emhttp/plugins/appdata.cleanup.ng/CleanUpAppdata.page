@@ -152,15 +152,21 @@ function toggleSelectAll() {
 }
 
 function ignoreThis(el) {
-	$.post(caURL,{action:'ignorePath',path:$(el).data('path'),csrf_token:csrf_token}).done(acngIgnoreSaved).fail(function(){ acngIgnoreSaved(""); });
+	$.post(caURL,{action:'ignorePath',path:$(el).data('path'),csrf_token:csrf_token}).done(acngIgnoreSaved).fail(acngIgnoreUnconfirmed);
 }
 
 function unignoreThis(el) {
-	$.post(caURL,{action:'unignorePath',path:$(el).data('path'),csrf_token:csrf_token}).done(acngIgnoreSaved).fail(function(){ acngIgnoreSaved(""); });
+	$.post(caURL,{action:'unignorePath',path:$(el).data('path'),csrf_token:csrf_token}).done(acngIgnoreSaved).fail(acngIgnoreUnconfirmed);
 }
 
 function acngIgnoreSaved(data) {
 	if ( $.trim(String(data || "")) !== "ok" ) swal("<?tr("The ignore list was not saved")?>","<?tr("Nothing changed; try again.")?>","error");
+	loadAppdata();
+}
+
+// No answer: the change may have been saved before the reply was lost, so the refreshed list is the truth.
+function acngIgnoreUnconfirmed() {
+	swal("<?tr("The ignore list change was not confirmed")?>","<?tr("Check the refreshed list; try again if it did not change.")?>","warning");
 	loadAppdata();
 }
 
@@ -225,6 +231,9 @@ function loadAppdata() {
 		$("#selectAll").prop("disabled", $('.appdata').length === 0);
 		updateDeleteButton();
 		updateSelectAllLabel();
+	}).fail(function() {
+		acngHideTip();
+		$("#settings").html("<div class='acng-empty'><?tr("The scan did not answer. Reload the page to try again.")?></div>");
 	});
 	$("#deleteButton").prop("disabled",true);
 }

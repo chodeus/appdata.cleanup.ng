@@ -581,7 +581,7 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
       $contents = @file_get_contents($f);
       if ( $contents === false ) { $uncertain = true; continue; }   # an existing compose file we couldn't read -> protection is incomplete
       if ( $contents === "" ) continue;
-      $contents = appdataCleanupNgExpandEnv($contents,$env);
+      $contents = appdataCleanupNgExpandEnv(str_replace("\r","",$contents),$env);   # a Windows line ending is not part of a path
       # a trailing YAML comment ("- /x:/y   # note") is not part of the path; a " #" inside quotes is
       $contents = preg_replace_callback('/^([^\n]*?)[ \t]+#[^\n]*$/m',function($m) {
         return ( substr_count($m[1],'"') % 2 === 0 && substr_count($m[1],"'") % 2 === 0 ) ? $m[1] : $m[0];

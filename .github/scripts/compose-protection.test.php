@@ -68,6 +68,9 @@ $cases = array(
   ), array("flowapp", "second"), false),
   "an apostrophe in a quoted path" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \"/mnt/nvme/appdata/Bob's app:/config\"\n"), array("Bob's app"), false),
   "a quoted path with a hash" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \"/mnt/nvme/appdata/Plex #2:/config\"   # second server\n"), array("Plex #2"), false),
+  "Windows line endings" => array(array(
+    "$projects/p/indirect" => $appdata, "$appdata/docker-compose.yml" => "services:\r\n  app:\r\n    image: x\r\n    volumes:\r\n      - type: bind\r\n        source: ./crlf\r\n        target: /config\r\n      - /mnt/nvme/appdata/crlf2:/x\r\n",
+  ), array("crlf", "crlf2"), false),
   "an unset variable led by - source" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - source: \${APPDIR}\n        target: /config\n        type: bind\n"), array(), true),
   "a missing compose file" => array(array("$projects/p/indirect" => "$appdata/gone/prod.yml", "$projects/p/indirect_mode" => "file"), array(), true),
   "a missing compose folder" => array(array("$projects/p/indirect" => "$appdata/gone"), array(), true),
