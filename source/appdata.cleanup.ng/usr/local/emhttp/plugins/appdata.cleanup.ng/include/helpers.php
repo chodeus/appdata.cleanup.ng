@@ -145,15 +145,24 @@ function appdataCleanupNgPathWithinAppdata($path) {
 }
 
 function appdataCleanupNgCanon($path) {
-  $p = rtrim(preg_replace('#/+#','/',trim((string)$path)),"/");
+  return appdataCleanupNgViewKey(trim((string)$path));
+}
+
+# a physical path, exactly as named: only repeated and trailing slashes go (names may end in a space)
+function appdataCleanupNgPhysical($path) {
+  return rtrim(preg_replace('#/+#','/',(string)$path),"/");
+}
+
+# the /mnt/user view of a path, without trimming it: one key for the same folder on any pool or disk
+function appdataCleanupNgViewKey($path) {
+  $p = appdataCleanupNgPhysical($path);
   # drop "." segments so /mnt/user/./appdata compares equal to /mnt/user/appdata.
   # ".." is deliberately NOT resolved here: traversal is rejected by the callers instead.
   while ( strpos($p,"/./") !== false ) $p = str_replace("/./","/",$p);
   $p = preg_replace('#/\.$#','',$p);
   # collapse any pool/array-disk mount to its /mnt/user view so the same folder compares equal regardless of pool; skip mounts that are genuinely not the user share
   if ( preg_match('#^/mnt/([^/]+)(/.*)?$#',$p,$m) ) {
-    $skip = array("user","user0","disks","remotes","rootsharecache","addons",".","..");
-    if ( ! in_array($m[1],$skip,true) ) {
+    if ( ! in_array($m[1],appdataCleanupNgNotShareMounts(),true) ) {
       $p = "/mnt/user".(isset($m[2]) ? $m[2] : "");
     }
   }
@@ -189,34 +198,79 @@ function appdataCleanupNgZfsAvailable() {
   return true;
 }
 
-function appdataCleanupNgZfsDatasetMap() {
-  static $map = null;
-  if ( $map !== null ) return $map;
-  if ( ! appdataCleanupNgZfsAvailable() ) return array();
+# mounted datasets keyed by mountpoint, kept only where the mount table shows them: after zfs rename -u the
+# property names a path the dataset isn't mounted at. Empty when the mount table can't be read.
+function appdataCleanupNgZfsDatasetMap($mountinfo="/proc/self/mountinfo") {
+  static $maps = array();
+  if ( isset($maps[$mountinfo]) ) return $maps[$mountinfo];
+  $live = appdataCleanupNgZfsAvailable() ? appdataCleanupNgZfsLiveMounts($mountinfo) : null;
+  if ( $live === null ) return array();
   $out = array(); $rc = 1;
-  @exec("zfs list -H -o name,mountpoint -t filesystem 2>/dev/null",$out,$rc);
+  @exec("zfs list -H -o name,mounted,mountpoint -t filesystem 2>/dev/null",$out,$rc);
   if ( $rc !== 0 ) return array();
   $map = array();
   foreach ( $out as $line ) {
-    $parts = preg_split('/\t+/',rtrim($line,"\n"));
-    if ( count($parts) < 2 ) continue;
+    $parts = explode("\t",rtrim($line,"\n"),3);
+    # an unmounted dataset (a received replica, canmount=noauto) holds none of what is at its mountpoint
+    if ( count($parts) < 3 || $parts[1] !== "yes" ) continue;
     $name = trim($parts[0]);
-    $mp = appdataCleanupNgCanon($parts[1]);
-    if ( $name !== "" && $mp !== "" && $mp[0] === "/" ) $map[$mp] = $name;
+    $mp = appdataCleanupNgPhysical($parts[2]);
+    if ( $name !== "" && in_array($mp,$live[$name] ?? array(),true) ) $map[$mp] = $name;
   }
-  return $map;
+  return $maps[$mountinfo] = $map;
 }
 
-function appdataCleanupNgResolveZfsDataset($path) {
-  $map = appdataCleanupNgZfsDatasetMap();
+# the dataset mounted exactly at this folder; through /mnt/user, the one mounted at it when the folder has no other copy
+function appdataCleanupNgResolveZfsDataset($path,$mountinfo="/proc/self/mountinfo") {
+  $map = appdataCleanupNgZfsDatasetMap($mountinfo);
   if ( empty($map) ) return "";
-  $variants = array(appdataCleanupNgCanon($path));
+  $variants = array(appdataCleanupNgPhysical($path));
   $rp = @realpath($path);
-  if ( $rp !== false ) $variants[] = appdataCleanupNgCanon($rp);
+  if ( $rp !== false ) $variants[] = appdataCleanupNgPhysical($rp);
   foreach ( $variants as $v ) {
     if ( $v !== "" && isset($map[$v]) ) return $map[$v];
   }
+  foreach ( $variants as $v ) {
+    if ( strpos($v,"/mnt/user/") !== 0 ) continue;   # a pool or disk path means that place only
+    $hits = array();
+    foreach ( $map as $mp => $name ) if ( appdataCleanupNgViewKey($mp) === $v ) $hits[$mp] = $name;
+    # destroying the dataset would leave a copy on another pool or disk, so the mount checks refuse it instead
+    if ( count($hits) === 1 && count(appdataCleanupNgFolderCopies($v)) === 1 ) return reset($hits);
+  }
   return "";
+}
+
+# entries under /mnt that are not a pool or array disk holding share folders
+function appdataCleanupNgNotShareMounts() {
+  return array("user","user0","disks","remotes","rootsharecache","addons",".","..");
+}
+
+# where a /mnt/user folder physically is: the same path on each pool and array disk that has it
+function appdataCleanupNgFolderCopies($userPath,$mnt="/mnt") {
+  $rest = substr($userPath,strlen("/mnt/user"));
+  $copies = array();
+  foreach ( (array)@scandir($mnt) as $e ) {
+    if ( ! in_array($e,appdataCleanupNgNotShareMounts(),true) && is_dir($mnt."/".$e.$rest) ) $copies[] = $mnt."/".$e.$rest;
+  }
+  return $copies;
+}
+
+# filesystems a delete of $dir would reach: mounted at or inside it (a bind of the same filesystem keeps its device),
+# through /mnt/user on any pool or disk too; null when the mount table can't be read or parsed
+function appdataCleanupNgMountsInside($dir,$mountinfo="/proc/self/mountinfo") {
+  $lines = @file($mountinfo,FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES);
+  $d = appdataCleanupNgPhysical($dir);
+  if ( ! $lines || $d === "" ) return null;
+  $viaUser = strpos($d,"/mnt/user/") === 0;
+  $inside = array();
+  foreach ( $lines as $line ) {
+    $fields = explode(" ",$line);
+    if ( count($fields) < 5 || $fields[4] === "" ) return null;
+    $mp = preg_replace_callback('/\\\\([0-7]{3})/',function($m) { return chr(octdec($m[1])); },$fields[4]);
+    $at = $viaUser ? appdataCleanupNgViewKey($mp) : appdataCleanupNgPhysical($mp);
+    if ( strpos($at."/",$d."/") === 0 ) $inside[] = $mp;
+  }
+  return $inside;
 }
 
 function appdataCleanupNgIsMountPoint($path) {
@@ -228,7 +282,7 @@ function appdataCleanupNgIsMountPoint($path) {
 }
 
 # destroy a dataset, auto-detecting whether -r is required (snapshots/children)
-function appdataCleanupNgZfsDestroy($dataset) {
+function appdataCleanupNgZfsDestroy($dataset,$mountinfo="/proc/self/mountinfo") {
   $ds = trim((string)$dataset);
   if ( $ds === "" ) return array("ok"=>false,"recursive"=>false,"message"=>"missing dataset name");
   $o = array(); $rc = 1;
@@ -240,6 +294,10 @@ function appdataCleanupNgZfsDestroy($dataset) {
     $err = strtolower(implode("\n",$o));
     if ( strpos($err,"child") !== false || strpos($err,"snapshot") !== false || strpos($err,"dependent") !== false || strpos($err,"clone") !== false ) {
       $recursive = true;
+      # -r also destroys child datasets, but the in-use checks only covered what is mounted inside this folder
+      $outside = appdataCleanupNgZfsChildrenOutside($ds,$mountinfo);
+      if ( $outside === null ) return array("ok"=>false,"recursive"=>true,"blocked"=>"its child datasets could not be checked","message"=>"child datasets could not be checked, not escalating to -r");
+      if ( $outside ) return array("ok"=>false,"recursive"=>true,"blocked"=>"child datasets outside this folder: ".implode(", ",$outside),"message"=>"child datasets outside the folder: ".implode(", ",$outside));
     } else {
       return array("ok"=>false,"recursive"=>false,"message"=>"dry-run failed, not escalating to -r: ".trim(implode("\n",$o)));
     }
@@ -247,6 +305,50 @@ function appdataCleanupNgZfsDestroy($dataset) {
   $o = array(); $rc = 1;
   @exec("zfs destroy ".($recursive ? "-r " : "").escapeshellarg($ds)." 2>&1",$o,$rc);
   return array("ok"=>($rc===0),"recursive"=>$recursive,"message"=>trim(implode("\n",$o)));
+}
+
+# where each ZFS dataset is mounted right now (dataset => mount points), from the mount table; null when it can't be read
+function appdataCleanupNgZfsLiveMounts($mountinfo="/proc/self/mountinfo") {
+  $lines = @file($mountinfo,FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES);
+  if ( ! $lines ) return null;
+  $unescape = function($v) { return preg_replace_callback('/\\\\([0-7]{3})/',function($m) { return chr(octdec($m[1])); },$v); };
+  $live = array();
+  foreach ( $lines as $line ) {
+    $sides = explode(" - ",$line,2);
+    $before = explode(" ",$sides[0]);
+    $after = explode(" ",$sides[1] ?? "");
+    if ( count($before) < 5 || count($after) < 2 ) return null;
+    if ( $after[0] === "zfs" ) $live[$unescape($after[1])][] = appdataCleanupNgPhysical($unescape($before[4]));
+  }
+  return $live;
+}
+
+# child datasets of $ds whose data is not inside $ds's folder: volumes, unmounted, or mounted elsewhere; null when unreadable.
+# Judged by where they are mounted now, not the mountpoint property (zfs rename -u moves the property, not the mount).
+function appdataCleanupNgZfsChildrenOutside($ds,$mountinfo="/proc/self/mountinfo") {
+  $o = array(); $rc = 1;
+  @exec("zfs list -H -r -t filesystem,volume -o name,type,mounted,mountpoint ".escapeshellarg($ds)." 2>/dev/null",$o,$rc);
+  if ( $rc !== 0 ) return null;
+  $rows = array();
+  foreach ( $o as $line ) {
+    $p = explode("\t",rtrim($line,"\n"),4);
+    if ( count($p) !== 4 ) return null;   # a row we can't read may be the child that matters
+    $rows[$p[0]] = $p;
+  }
+  $live = appdataCleanupNgZfsLiveMounts($mountinfo);
+  if ( ! isset($rows[$ds]) || $live === null || count($live[$ds] ?? array()) !== 1 ) return null;
+  # physical paths, not canonical: an inherited child sits under its parent, and the /mnt/user view would equate another pool's path
+  $folder = $live[$ds][0];
+  $outside = array();
+  foreach ( $rows as $name => $p ) {
+    if ( $name === $ds ) continue;
+    $at = $live[$name] ?? array();
+    $inside = $p[1] === "filesystem" && $at && $folder !== "" && ! array_filter($at,function($m) use ($folder) { return ! appdataCleanupNgPathUnder($m,$folder); });
+    if ( $inside ) continue;
+    $where = $p[1] !== "filesystem" ? "a volume" : ( ! $at ? "not mounted" : "mounted at ".implode(", ",$at) );
+    $outside[] = $name." (".$where.")";
+  }
+  return $outside;
 }
 
 # ignore list: folders the user marks to never offer, persisted on flash keyed by canonical path
@@ -368,9 +470,13 @@ function appdataCleanupNgDeleteTemplate($file) {
 }
 
 # log to syslog so messages land in Tools > System Log and the Diagnostics bundle
+# one line for a log or a refusal: PHP's syslog() makes each line of a message its own record
+function appdataCleanupNgOneLine($text) {
+  return preg_replace('/[\x00-\x1f\x7f]+/'," ",(string)$text);
+}
 function appdataCleanupNgLog($message,$priority=LOG_INFO) {
   openlog("appdata.cleanup.ng",LOG_PID,LOG_USER);
-  syslog($priority,(string)$message);
+  syslog($priority,appdataCleanupNgOneLine($message));
   closelog();
 }
 

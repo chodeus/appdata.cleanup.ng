@@ -252,7 +252,7 @@ function deleteAppdata() {
 	var zfsWarn = "";
 	if ( zfsCount > 0 ) {
 		if ( $('#zfsEnable').is(':checked') ) {
-			zfsWarn = "<br><br><b style='color:#c0392b'>&#9888; " + zfsCount + " <?tr("ZFS dataset(s) selected - these are removed with zfs destroy, which also deletes their snapshots (no recovery).")?></b>";
+			zfsWarn = "<br><br><b style='color:#c0392b'>&#9888; " + zfsCount + " <?tr("ZFS dataset(s) selected - these are removed with zfs destroy, which also deletes their snapshots and any child datasets inside the folder (no recovery).")?></b>";
 		} else {
 			zfsWarn = "<br><br><b style='color:#e67e00'>&#9888; " + zfsCount + " <?tr("ZFS dataset(s) selected but ZFS deletion is off - they will be skipped. Enable it in the Danger Zone to remove them.")?></b>";
 		}

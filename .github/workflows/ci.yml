@@ -34,6 +34,13 @@ jobs:
       - name: Every plugin function called is defined
         run: php .github/scripts/check-plugin-functions.php source
 
+      # It creates folders under /mnt, so only inside this throwaway container.
+      - name: A delete reaches nothing outside the folder
+        uses: docker://php:8.2-cli@sha256:a76ea7d3dd8f65eefff85e9c883f4d146808e0075c30ae6bccbb2a3753d373b8
+        with:
+          entrypoint: php
+          args: .github/scripts/delete-scope.test.php
+
       - name: Validate plugin manifest (XML)
         run: xmllint --noout plugins/appdata.cleanup.ng.plg
 
