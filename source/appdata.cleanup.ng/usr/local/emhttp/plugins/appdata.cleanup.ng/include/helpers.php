@@ -491,25 +491,57 @@ function appdataCleanupNgExpandEnv($text,$env) {
   return $text;
 }
 
+# one Compose Manager metadata file of a project, trimmed; "" when it isn't there
+function appdataCleanupNgProjectValue($proj,$name) {
+  return is_file($proj."/".$name) ? trim((string)@file_get_contents($proj."/".$name)) : "";
+}
+
+# where a project's compose files live: [source folder, the compose file indirect names, if it names one];
+# null when indirect can't be read, so callers fail closed
+function appdataCleanupNgComposeSource($proj) {
+  if ( file_exists($proj."/indirect.invalid") ) return null;   # a broken target kept for repair
+  if ( ! file_exists($proj."/indirect") && ! is_link($proj."/indirect") ) return array($proj,array());
+  $target = rtrim(appdataCleanupNgProjectValue($proj,"indirect"),"/");
+  $mode = strtolower(appdataCleanupNgProjectValue($proj,"indirect_mode"));
+  if ( $target === "" || $target[0] !== "/" || ! in_array($mode,array("","file","folder"),true) ) return null;
+  # newer Compose Manager versions can point indirect at one compose file instead of a folder
+  if ( $mode !== "file" && ! is_file($target) ) return ( is_dir($target) && is_readable($target) ) ? array($target,array()) : null;
+  return ( is_file($target) && is_readable($target) ) ? array(dirname($target),array($target)) : null;
+}
+
+# the one env file compose gets: envpath (absolute, or relative to the project folder), else the stack's default
+function appdataCleanupNgComposeEnvFile($proj,$source) {
+  $envPath = appdataCleanupNgProjectValue($proj,"envpath");
+  if ( $envPath !== "" ) {
+    $candidate = $envPath[0] === "/" ? $envPath : $proj."/".$envPath;
+    if ( is_file($candidate) ) return $candidate;
+  }
+  $default = ( is_file($proj."/git.json") && is_file($proj."/.env") ) ? $proj."/.env" : $source."/.env";
+  return is_file($default) ? $default : "";
+}
+
+# compose files beyond the default names: COMPOSE_FILE in the env file (relative to it), extra_compose_files (relative to the source)
+function appdataCleanupNgComposeExtraFiles($proj,$source,$envFile) {
+  $composeEnv = array();
+  if ( $envFile !== "" ) appdataCleanupNgParseEnvFile($envFile,$composeEnv);
+  $files = array();
+  foreach ( preg_split('/[:;]/',(string)($composeEnv['COMPOSE_FILE'] ?? "")) as $extra ) {
+    $extra = trim($extra);
+    if ( $extra !== "" ) $files[] = $extra[0] === "/" ? $extra : dirname($envFile)."/".$extra;
+  }
+  foreach ( preg_split('/\R/',appdataCleanupNgProjectValue($proj,"extra_compose_files")) as $extra ) {
+    $extra = trim($extra);
+    if ( $extra !== "" && $extra[0] !== "#" ) $files[] = $extra[0] === "/" ? $extra : $source."/".$extra;
+  }
+  return $files;
+}
+
 # [compose source folder, compose files, env vars, env file] as Compose Manager runs the project (indirect file or folder,
 # extra_compose_files, COMPOSE_FILE, envpath); null when its compose location can't be read, so callers fail closed
 function appdataCleanupNgComposeProject($proj) {
-  if ( file_exists($proj."/indirect.invalid") ) return null;   # a broken target kept for repair
-  $source = $proj;
-  $files = array();
-  if ( file_exists($proj."/indirect") || is_link($proj."/indirect") ) {
-    $target = is_file($proj."/indirect") ? rtrim(trim((string)@file_get_contents($proj."/indirect")),"/") : "";
-    $mode = is_file($proj."/indirect_mode") ? strtolower(trim((string)@file_get_contents($proj."/indirect_mode"))) : "";
-    if ( $target === "" || $target[0] !== "/" || ! in_array($mode,array("","file","folder"),true) ) return null;
-    if ( $mode === "file" || is_file($target) ) {
-      if ( ! is_file($target) || ! is_readable($target) ) return null;
-      $files[] = $target;
-      $source = dirname($target);
-    } else {
-      if ( ! is_dir($target) || ! is_readable($target) ) return null;
-      $source = $target;
-    }
-  }
+  $located = appdataCleanupNgComposeSource($proj);
+  if ( $located === null ) return null;
+  list($source,$files) = $located;
   # cover modern (compose.yaml) and legacy (docker-compose.yml) names + overrides, in source and project dirs
   foreach ( array("compose","docker-compose","compose.override","docker-compose.override") as $n ) {
     foreach ( array("yaml","yml") as $ext ) $files[] = $source."/".$n.".".$ext;
@@ -517,32 +549,11 @@ function appdataCleanupNgComposeProject($proj) {
   foreach ( array("compose.override","docker-compose.override") as $n ) {
     foreach ( array("yaml","yml") as $ext ) $files[] = $proj."/".$n.".".$ext;
   }
-  # the one env file compose gets: envpath (absolute, or relative to the project folder), else the default for the stack
-  $envFile = "";
-  $envPath = is_file($proj."/envpath") ? trim((string)@file_get_contents($proj."/envpath")) : "";
-  if ( $envPath !== "" ) {
-    $candidate = $envPath[0] === "/" ? $envPath : $proj."/".$envPath;
-    if ( is_file($candidate) ) $envFile = $candidate;
-  }
-  $git = is_file($proj."/git.json");
-  $default = ( $git && is_file($proj."/.env") ) ? $proj."/.env" : $source."/.env";
-  if ( $envFile === "" && is_file($default) ) $envFile = $default;
+  $envFile = appdataCleanupNgComposeEnvFile($proj,$source);
   # it wins; the other .env files only resolve what it leaves unset, which can only add protection
   $env = array();
   foreach ( array_unique(array_filter(array($envFile,$source."/.env",$proj."/.env"))) as $e ) appdataCleanupNgParseEnvFile($e,$env);
-  # more compose files: COMPOSE_FILE in that env file (relative to it), and extra_compose_files (relative to the source)
-  $composeEnv = array();
-  if ( $envFile !== "" ) appdataCleanupNgParseEnvFile($envFile,$composeEnv);
-  if ( isset($composeEnv['COMPOSE_FILE']) && trim($composeEnv['COMPOSE_FILE']) !== "" ) {
-    foreach ( preg_split('/[:;]/',$composeEnv['COMPOSE_FILE']) as $extra ) {
-      $extra = trim($extra);
-      if ( $extra !== "" ) $files[] = $extra[0] === "/" ? $extra : dirname($envFile)."/".$extra;
-    }
-  }
-  foreach ( (array)( is_file($proj."/extra_compose_files") ? @file($proj."/extra_compose_files",FILE_IGNORE_NEW_LINES) : array() ) as $extra ) {
-    $extra = trim($extra);
-    if ( $extra !== "" && $extra[0] !== "#" ) $files[] = $extra[0] === "/" ? $extra : $source."/".$extra;
-  }
+  $files = array_merge($files,appdataCleanupNgComposeExtraFiles($proj,$source,$envFile));
   return array(rtrim($source,"/"),array_values(array_unique($files)),$env,$envFile);
 }
 
@@ -555,7 +566,6 @@ function appdataCleanupNgProtectFolderOf(&$protected,$path) {
     if ( $folder !== "" ) foreach ( appdataCleanupNgPathViews($folder) as $c ) $protected[$c] = true;
   }
 }
-
 # how to run the compose CLI that Compose Manager installs; empty when there is none
 function appdataCleanupNgComposeCommand() {
   static $cmd = null;
@@ -575,6 +585,57 @@ function appdataCleanupNgCanUnshareNetwork() {
   return $ok;
 }
 
+# run compose with $env set, without network where unshare allows and for at most 20 s: [exit code, stdout, stderr]
+function appdataCleanupNgComposeRun($argv,$env) {
+  $line = "env ".implode(" ",array_map("escapeshellarg",$env))." ".( appdataCleanupNgCanUnshareNetwork() ? "unshare -n " : "" )
+        . "timeout 20 ".implode(" ",array_map("escapeshellarg",$argv));
+  $errFile = tempnam(sys_get_temp_dir(),"acng-compose");
+  $out = array(); $rc = 1;
+  @exec($line." 2>".escapeshellarg($errFile),$out,$rc);
+  $err = (string)@file_get_contents($errFile);
+  @unlink($errFile);
+  return array($rc,implode("\n",$out),$err);
+}
+
+# $env plus each variable compose reported unset, set to $marker; null when the names can't be read
+function appdataCleanupNgComposeMarkUnset($err,$env,$marker) {
+  # logged as msg="The \"TZ\" variable is not set..." by recent compose, unescaped by older ones
+  if ( ! preg_match_all('/\\\\?"([A-Za-z_][A-Za-z0-9_]*)\\\\?" variable is not set/',$err,$unset) ) return null;
+  foreach ( array_unique($unset[1]) as $name ) $env[] = $name."=".$marker;
+  return $env;
+}
+
+function appdataCleanupNgComposeMarkerInPaths($config,$marker) {
+  $paths = appdataCleanupNgComposeConfigPaths($config);
+  foreach ( array_merge($paths['mounts'],$paths['files'],$paths['mentions']) as $path ) if ( strpos($path,$marker) !== false ) return true;
+  return false;
+}
+
+# one `compose config` run: the decoded stack, null when this compose lacks one of the flags, false when it can't be read
+function appdataCleanupNgComposeConfigAttempt($argv) {
+  # remote include loaders off: a scan must never fetch anything. Every profile, so a service that only starts with one is read too.
+  $env = array("COMPOSE_EXPERIMENTAL_GIT_REMOTE=false","COMPOSE_EXPERIMENTAL_OCI_REMOTE=false","COMPOSE_PROFILES=*");
+  list($rc,$out,$err) = appdataCleanupNgComposeRun($argv,$env);
+  if ( $rc !== 0 ) return stripos($err,"unknown flag") !== false ? null : false;
+  # an unset variable is left blank: set each to a marker and ask again; only a marker inside a path is a problem
+  $marker = stripos($err,"is not set") !== false ? "acng-unset-".getmypid() : "";
+  if ( $marker !== "" ) {
+    $env = appdataCleanupNgComposeMarkUnset($err,$env,$marker);
+    if ( $env === null ) return false;
+    list($rc,$out) = appdataCleanupNgComposeRun($argv,$env);
+    if ( $rc !== 0 ) return false;
+  }
+  $config = json_decode($out,true);
+  if ( ! is_array($config) ) return false;
+  return ( $marker !== "" && appdataCleanupNgComposeMarkerInPaths($config,$marker) ) ? false : $config;
+}
+
+# without --no-env-resolution compose folds env_file into environment, so those files (also in includes) can't be found
+function appdataCleanupNgComposeNamesEnvFiles($files) {
+  foreach ( $files as $f ) if ( preg_match('/\b(env_file|include|extends)\b/',(string)@file_get_contents($f)) ) return true;
+  return false;
+}
+
 # The stack as compose would run it (its decoded `config`): null without a usable compose CLI, false when compose
 # can't read it (an error, an unset variable inside a path, no answer in 20 s), so the caller fails closed
 function appdataCleanupNgComposeConfig($source,$files,$envFile) {
@@ -585,94 +646,92 @@ function appdataCleanupNgComposeConfig($source,$files,$envFile) {
   $args = array_merge($cmd,array("--project-directory",$source));
   foreach ( $used as $f ) array_push($args,"-f",$f);
   if ( $envFile !== "" ) array_push($args,"--env-file",$envFile);
-  # remote include loaders off and, where unshare allows, no network: a scan must never fetch anything.
-  # Every profile, so a service that only starts with one is read too.
-  $env = array("COMPOSE_EXPERIMENTAL_GIT_REMOTE=false","COMPOSE_EXPERIMENTAL_OCI_REMOTE=false","COMPOSE_PROFILES=*");
-  $run = function($flags,$env) use ($args) {
-    $line = "env ".implode(" ",array_map("escapeshellarg",$env))." ".( appdataCleanupNgCanUnshareNetwork() ? "unshare -n " : "" )
-          . "timeout 20 ".implode(" ",array_map("escapeshellarg",array_merge($args,array("config"),$flags)));
-    $errFile = tempnam(sys_get_temp_dir(),"acng-compose");
-    $out = array(); $rc = 1;
-    @exec($line." 2>".escapeshellarg($errFile),$out,$rc);
-    $err = (string)@file_get_contents($errFile);
-    @unlink($errFile);
-    return array($rc,implode("\n",$out),$err);
-  };
   # older compose lacks --no-env-resolution (which keeps env_file paths); without --format json it can't be used at all
   foreach ( array(array("--no-env-resolution","--format","json"),array("--format","json")) as $attempt => $flags ) {
-    list($rc,$out,$err) = $run($flags,$env);
-    if ( $rc !== 0 && stripos($err,"unknown flag") !== false ) continue;
-    if ( $rc !== 0 ) return false;
-    # an unset variable is left blank: set each to a marker and ask again; only a marker inside a path is a problem
-    $marker = "";
-    if ( stripos($err,"is not set") !== false ) {
-      # logged as msg="The \"TZ\" variable is not set..." by recent compose, unescaped by older ones
-      if ( ! preg_match_all('/\\\\?"([A-Za-z_][A-Za-z0-9_]*)\\\\?" variable is not set/',$err,$unset) ) return false;
-      $marker = "acng-unset-".getmypid();
-      foreach ( array_unique($unset[1]) as $name ) $env[] = $name."=".$marker;
-      list($rc,$out,$err) = $run($flags,$env);
-      if ( $rc !== 0 ) return false;
-    }
-    $config = json_decode($out,true);
-    if ( ! is_array($config) ) return false;
-    if ( $marker !== "" ) {
-      $paths = appdataCleanupNgComposeConfigPaths($config);
-      foreach ( array_merge($paths['mounts'],$paths['files'],$paths['mentions']) as $path ) if ( strpos($path,$marker) !== false ) return false;
-    }
-    # without --no-env-resolution compose folds env_file into environment, so those files (also in includes) can't be found
-    if ( $attempt === 1 ) foreach ( $used as $f ) if ( preg_match('/\b(env_file|include|extends)\b/',(string)@file_get_contents($f)) ) return false;
-    return $config;
+    $config = appdataCleanupNgComposeConfigAttempt(array_merge($args,array("config"),$flags));
+    if ( $config === null ) continue;
+    return ( $attempt === 1 && appdataCleanupNgComposeNamesEnvFiles($used) ) ? false : $config;
   }
   return null;
+}
+
+# $array[$key] as a list, like (array)($array[$key] ?? array())
+function appdataCleanupNgListAt($array,$key) {
+  return isset($array[$key]) ? (array)$array[$key] : array();
+}
+
+# bind sources of one service in a compose config
+function appdataCleanupNgComposeServiceMounts($service) {
+  $mounts = array();
+  foreach ( appdataCleanupNgListAt($service,'volumes') as $v ) if ( is_array($v) && ($v['type'] ?? "") === "bind" ) $mounts[] = $v['source'] ?? "";
+  return $mounts;
+}
+
+# env files and build paths of one service in a compose config
+function appdataCleanupNgComposeServiceFiles($service) {
+  $files = array();
+  foreach ( appdataCleanupNgListAt($service,'env_file') as $e ) $files[] = is_array($e) ? ($e['path'] ?? "") : $e;
+  $build = is_array($service['build'] ?? null) ? $service['build'] : array();
+  array_push($files,$build['context'] ?? "",$build['dockerfile'] ?? "");
+  return array_merge($files,array_values(appdataCleanupNgListAt($build,'additional_contexts')));
+}
+
+# every string in a compose config naming a /mnt path, container-side targets aside
+function appdataCleanupNgComposeMentions($node,&$mentions) {
+  foreach ( (array)$node as $key => $value ) {
+    if ( $key === "target" && ! is_array($value) ) continue;   # a container-side path; a service may be named target
+    if ( is_array($value) ) appdataCleanupNgComposeMentions($value,$mentions);
+    else if ( is_string($value) && preg_match_all('#/mnt/[^\s"\':;,=]+#',$value,$m) ) foreach ( $m[0] as $hit ) $mentions[] = $hit;
+  }
+}
+
+function appdataCleanupNgAbsolutePaths($list) {
+  return array_values(array_unique(array_filter(array_map("strval",$list),function($p) { return $p !== "" && $p[0] === "/"; })));
 }
 
 # Host paths in a compose config: 'mounts' (bind sources, named-volume devices), 'files' (env files, build contexts,
 # secret and config files) and 'mentions' (any other string naming a /mnt path, such as an environment value)
 function appdataCleanupNgComposeConfigPaths($config) {
   $mounts = array(); $files = array(); $mentions = array();
-  foreach ( (array)($config['services'] ?? array()) as $service ) {
+  foreach ( appdataCleanupNgListAt($config,'services') as $service ) {
     if ( ! is_array($service) ) continue;
-    foreach ( (array)($service['volumes'] ?? array()) as $v ) if ( is_array($v) && ($v['type'] ?? "") === "bind" ) $mounts[] = $v['source'] ?? "";
-    foreach ( (array)($service['env_file'] ?? array()) as $e ) $files[] = is_array($e) ? ($e['path'] ?? "") : $e;
-    $build = is_array($service['build'] ?? null) ? $service['build'] : array();
-    $files[] = $build['context'] ?? "";
-    $files[] = $build['dockerfile'] ?? "";
-    foreach ( (array)($build['additional_contexts'] ?? array()) as $c ) $files[] = $c;
+    $mounts = array_merge($mounts,appdataCleanupNgComposeServiceMounts($service));
+    $files = array_merge($files,appdataCleanupNgComposeServiceFiles($service));
   }
-  foreach ( (array)($config['volumes'] ?? array()) as $volume ) if ( is_array($volume) ) $mounts[] = $volume['driver_opts']['device'] ?? "";
+  foreach ( appdataCleanupNgListAt($config,'volumes') as $volume ) if ( is_array($volume) ) $mounts[] = $volume['driver_opts']['device'] ?? "";
   foreach ( array("secrets","configs") as $kind ) {
-    foreach ( (array)($config[$kind] ?? array()) as $item ) if ( is_array($item) ) $files[] = $item['file'] ?? "";
+    foreach ( appdataCleanupNgListAt($config,$kind) as $item ) if ( is_array($item) ) $files[] = $item['file'] ?? "";
   }
-  # container-side paths (targets) are not host paths
-  $walk = function($node) use (&$walk,&$mentions) {
-    foreach ( (array)$node as $key => $value ) {
-      if ( $key === "target" && ! is_array($value) ) continue;   # a container-side path; a service may be named target
-      if ( is_array($value) ) $walk($value);
-      else if ( is_string($value) && preg_match_all('#/mnt/[^\s"\':;,=]+#',$value,$m) ) foreach ( $m[0] as $hit ) $mentions[] = $hit;
-    }
-  };
-  $walk($config);
-  $absolute = function($list) { return array_values(array_unique(array_filter(array_map("strval",$list),function($p) { return $p !== "" && $p[0] === "/"; }))); };
-  return array("mounts" => $absolute($mounts), "files" => $absolute($files), "mentions" => $absolute($mentions));
+  appdataCleanupNgComposeMentions($config,$mentions);
+  return array("mounts" => appdataCleanupNgAbsolutePaths($mounts), "files" => appdataCleanupNgAbsolutePaths($files), "mentions" => appdataCleanupNgAbsolutePaths($mentions));
+}
+
+# existing paths a compose file's text names, with variables filled in; relative ones against the file's folder
+function appdataCleanupNgComposeExistingNames($file,$env) {
+  $text = appdataCleanupNgExpandEnv(str_replace("\r","",(string)@file_get_contents($file)),$env);
+  preg_match_all('#"([^"\n]+)"|\'([^\'\n]+)\'|([^\s"\'\[\]{},:=\#]+)#',$text,$m,PREG_SET_ORDER);
+  $paths = array();
+  foreach ( $m as $hit ) {
+    $name = implode("",array_slice($hit,1));   # only the alternative that matched is non-empty
+    if ( $name === "" || appdataCleanupNgHasControlChars($name) ) continue;
+    $path = $name[0] === "/" ? $name : dirname($file)."/".$name;
+    if ( file_exists($path) ) $paths[] = $path;
+  }
+  return $paths;
 }
 
 # Existing paths the compose files name (include and extends targets, an include's env_file, anything else), with
 # variables filled in, following any yaml file found. compose's output never lists them; extras only protect more.
 function appdataCleanupNgComposeNamedPaths($files,$env) {
   $seen = array();
-  $queue = array_values($files);
   $found = array();
+  $queue = array_values($files);
   while ( $queue && count($seen) < 100 ) {
     $f = array_shift($queue);
     if ( isset($seen[$f]) ) continue;
     $seen[$f] = true;
-    $text = appdataCleanupNgExpandEnv(str_replace("\r","",(string)@file_get_contents($f)),$env);
-    preg_match_all('#"([^"\n]+)"|\'([^\'\n]+)\'|([^\s"\'\[\]{},:=\#]+)#',$text,$m,PREG_SET_ORDER);
-    foreach ( $m as $hit ) {
-      $name = ( $hit[1] ?? "" ) !== "" ? $hit[1] : ( ( $hit[2] ?? "" ) !== "" ? $hit[2] : ( $hit[3] ?? "" ) );
-      if ( $name === "" || appdataCleanupNgHasControlChars($name) ) continue;
-      $path = $name[0] === "/" ? $name : dirname($f)."/".$name;
-      if ( ! file_exists($path) || isset($found[$path]) ) continue;
+    foreach ( appdataCleanupNgComposeExistingNames($f,$env) as $path ) {
+      if ( isset($found[$path]) ) continue;
       $found[$path] = true;
       if ( is_file($path) && preg_match('#\.ya?ml$#',$path) ) $queue[] = $path;
     }
@@ -690,115 +749,144 @@ function appdataCleanupNgCoversAppdataRoot($path) {
   return false;
 }
 
-function appdataCleanupNgComposeReferencedPaths(&$uncertain = null, &$rootBound = null) {
-  $rootBound = false;   # set true when a stack binds a whole appdata root: callers then skip the filesystem scan
-  $uncertain = false;   # set true when a compose file can't be read or still has an unresolved ${VAR} bind host -> callers must fail closed
-  $projectsDir = "/boot/config/plugins/compose.manager/projects";
-  if ( ! is_dir($projectsDir) ) return array();
-  $roots = appdataCleanupNgAppdataRoots();
-  if ( empty($roots) ) return array();
+# a bind host that can be mapped to a folder: no control characters, no ../
+function appdataCleanupNgTrustedHost($host) {
+  return ! appdataCleanupNgHasControlChars($host) && ! preg_match('#(^|/)\.\.(/|$)#',$host);
+}
 
-  # tolerate redundant separators and "." segments in a bind path; a literal root match would
-  # miss them and leave the folder silently unprotected
+# a compose file's text ready to scan: variables filled in, Windows line endings and trailing comments gone; false if unreadable
+function appdataCleanupNgComposeText($file,$env) {
+  $contents = @file_get_contents($file);
+  if ( $contents === false ) return false;
+  $contents = appdataCleanupNgExpandEnv(str_replace("\r","",$contents),$env);   # a Windows line ending is not part of a path
+  # a trailing YAML comment ("- /x:/y   # note") is not part of the path; a " #" inside quotes is
+  return preg_replace_callback('/^([^\n]*?)[ \t]+#[^\n]*$/m',function($m) {
+    return ( substr_count($m[1],'"') % 2 === 0 && substr_count($m[1],"'") % 2 === 0 ) ? $m[1] : $m[0];
+  },$contents);
+}
+
+# true when a compose file's binds can't all be known: an unresolved ${VAR} in a bind host (short "- ${VAR}/x:/y", where
+# [^\n:=] skips "KEY=val" items, or long "source: ${VAR}", also in one-line lists and maps), or an include or extends
+function appdataCleanupNgComposeTextUnreadable($contents) {
+  return preg_match('#(?:^[ \t]*-|[\[,])[ \t]*["\']?[^\n:=,\]]*\$\{?[A-Za-z_][^\n:]*:/#m',$contents)
+    || preg_match('#(?:^[ \t]*(?:-[ \t]*)?|[{,][ \t]*)source[ \t]*:[ \t]*["\']?[^\n,}]*\$[A-Za-z_{]#m',$contents)
+    || preg_match('#^[ \t]*["\']?(?:include|extends)["\']?[ \t]*:#m',$contents);   # their files are not read here
+}
+
+# absolute bind hosts: "- /x:/y", "source: /x", also in one-line lists and maps; a quoted one may hold the other quote
+function appdataCleanupNgComposeAbsoluteHosts($contents) {
+  $hosts = array();
+  if ( preg_match_all('#(?:^[ \t]*(?:-[ \t]*(?:source[ \t]*:)?|source[ \t]*:)|[\[,][ \t]*|[{,][ \t]*source[ \t]*:)[ \t]*(?:"(/[^\n:"]*)|\'(/[^\n:\']*)|(/[^\n:"\',\]}]*))#m',$contents,$found,PREG_SET_ORDER) ) {
+    foreach ( $found as $h ) $hosts[] = ($h[1] ?? "").($h[2] ?? "").($h[3] ?? "");
+  }
+  return $hosts;
+}
+
+# relative bind hosts: only binds ("- ./x:/y", "source: ./x"), never env_file items
+function appdataCleanupNgComposeRelativeHosts($contents) {
+  $rel = array();
+  if ( preg_match_all('#(?:^[ \t]*-|[\[,])[ \t]*["\']?(\.\.?(?:/[^\n:"\',\]]*)?):#m',$contents,$short) ) $rel = $short[1];
+  if ( preg_match_all('#^[ \t]*(?:-[ \t]*)?source[ \t]*:[ \t]*["\']?(\.\.?(?:/[^\n"\']*)?)["\']?[ \t]*$#m',$contents,$long) ) $rel = array_merge($rel,$long[1]);
+  return $rel;
+}
+
+# protect the folders a compose file's bind hosts name: absolute ones on any pool or disk, relative ones against the
+# compose source, noting one that holds a whole appdata root; false when a host can't be trusted
+function appdataCleanupNgComposeProtectHosts($contents,$bases,&$protected,&$rootBound) {
+  $trusted = true;
+  foreach ( appdataCleanupNgComposeAbsoluteHosts($contents) as $raw ) {
+    $host = rtrim($raw,"/");
+    if ( ! appdataCleanupNgTrustedHost($host) ) { $trusted = false; continue; }
+    if ( appdataCleanupNgCoversAppdataRoot($raw) ) $rootBound = true;
+    appdataCleanupNgProtectFolderOf($protected,$host);
+  }
+  foreach ( appdataCleanupNgComposeRelativeHosts($contents) as $raw ) {
+    $host = rtrim($raw,"/");
+    if ( ! appdataCleanupNgTrustedHost($host) ) { $trusted = false; continue; }
+    foreach ( $bases as $b ) {
+      if ( appdataCleanupNgCoversAppdataRoot($b.substr($host,1)) ) $rootBound = true;
+      appdataCleanupNgProtectFolderOf($protected,$b.substr($host,1));
+    }
+  }
+  return $trusted;
+}
+
+# tolerate redundant separators and "." segments in a bind path: a literal root match would miss them
+function appdataCleanupNgComposeRootPattern($roots) {
   $sep = "/+(?:\\./+)*";
   $escaped = array();
   foreach ( $roots as $r ) {
     $parts = array_map(function($seg) { return preg_quote($seg,"#"); },explode("/",trim($r,"/")));
     $escaped[] = $sep.implode($sep,$parts);
   }
-  $pattern = "#(".implode("|",$escaped).")".$sep."([^\\s:'\"\\\\]+)#";
+  return "#(".implode("|",$escaped).")".$sep."([^\\s:'\"\\\\]+)#";
+}
 
+# protect the folders an appdata root path anywhere in the text names, and, as a fail-safe, those an unresolved
+# ${var}/<name> names when <name> exists under a root; false when a match can't be trusted
+function appdataCleanupNgComposeProtectRootMatches($contents,$pattern,$roots,&$protected) {
+  $trusted = true;
+  if ( preg_match_all($pattern,$contents,$matches,PREG_SET_ORDER) ) {
+    foreach ( $matches as $hit ) {
+      if ( ! appdataCleanupNgTrustedHost($hit[2]) ) { $trusted = false; continue; }
+      $firstSeg = strtok($hit[2],"/");         # appdata folder name under the root
+      if ( $firstSeg !== false && $firstSeg !== "" ) foreach ( appdataCleanupNgPathViews($hit[1]."/".$firstSeg) as $c ) $protected[$c] = true;
+    }
+  }
+  if ( preg_match_all('#\$(?:\{[A-Za-z_][A-Za-z0-9_]*(?::?-[^}]*)?\}|[A-Za-z_][A-Za-z0-9_]*)/([A-Za-z0-9][A-Za-z0-9._-]*)#',$contents,$uns,PREG_SET_ORDER) ) {
+    foreach ( $uns as $uh ) {
+      foreach ( $roots as $r ) if ( @is_dir($r."/".$uh[1]) ) foreach ( appdataCleanupNgPathViews($r."/".$uh[1]) as $c ) $protected[$c] = true;
+    }
+  }
+  return $trusted;
+}
+
+# protect what a stack's compose files bind, read by pattern; false when any of it can't be read or trusted
+function appdataCleanupNgComposeProtectByPattern($files,$env,$bases,&$protected,&$rootBound) {
+  $roots = appdataCleanupNgAppdataRoots();
+  $pattern = appdataCleanupNgComposeRootPattern($roots);
+  $trusted = true;
+  foreach ( array_filter($files,"is_file") as $f ) {
+    $contents = appdataCleanupNgComposeText($f,$env);
+    if ( $contents === false ) { $trusted = false; continue; }   # an existing compose file we couldn't read
+    $trusted = ! appdataCleanupNgComposeTextUnreadable($contents) && $trusted;
+    $trusted = appdataCleanupNgComposeProtectHosts($contents,$bases,$protected,$rootBound) && $trusted;
+    $trusted = appdataCleanupNgComposeProtectRootMatches($contents,$pattern,$roots,$protected) && $trusted;
+  }
+  return $trusted;
+}
+
+# protect what compose itself reports a stack uses; false when a reported path can't be trusted
+function appdataCleanupNgComposeProtectConfig($config,$files,$env,&$protected,&$rootBound) {
+  $trusted = true;
+  $paths = appdataCleanupNgComposeConfigPaths($config);
+  foreach ( array_merge($paths['mounts'],$paths['files'],$paths['mentions']) as $path ) {
+    if ( appdataCleanupNgHasControlChars($path) ) { $trusted = false; continue; }
+    appdataCleanupNgProtectFolderOf($protected,$path);
+  }
+  foreach ( $paths['mounts'] as $path ) if ( appdataCleanupNgCoversAppdataRoot($path) ) $rootBound = true;
+  foreach ( appdataCleanupNgComposeNamedPaths(array_filter($files,"is_file"),$env) as $path ) appdataCleanupNgProtectFolderOf($protected,$path);
+  return $trusted;
+}
+
+function appdataCleanupNgComposeReferencedPaths(&$uncertain = null, &$rootBound = null) {
+  $rootBound = false;   # set true when a stack binds a whole appdata root: callers then skip the filesystem scan
+  $uncertain = false;   # set true when a stack can't be fully read -> callers must fail closed
+  $projectsDir = "/boot/config/plugins/compose.manager/projects";
+  if ( ! is_dir($projectsDir) || ! appdataCleanupNgAppdataRoots() ) return array();
   $protected = array();
   foreach ( (array)glob($projectsDir."/*",GLOB_ONLYDIR) as $proj ) {
     $project = appdataCleanupNgComposeProject($proj);
     if ( $project === null ) { $uncertain = true; continue; }
     list($base,$files,$env,$envFile) = $project;
-    # the stack's own folder, and the folders of its env file and compose files: the stack breaks without them
     $bases = array_unique(array_filter(array($base,(string)@realpath($base))));
+    # the stack's own folder, and the folders of its env file and compose files: the stack breaks without them
     foreach ( array_merge($bases,array_filter(array_merge(array($envFile),$files),"is_file")) as $used ) appdataCleanupNgProtectFolderOf($protected,$used);
-    # compose itself reads the stack as it runs it; the patterns below are only for when there is no compose CLI
+    # compose itself reads the stack as it runs it; the patterns are for when there is no compose CLI, or it failed
     $config = appdataCleanupNgComposeConfig($base,$files,$envFile);
-    if ( $config === false ) $uncertain = true;   # and the patterns below still protect what they can read
-    if ( is_array($config) ) {
-      $paths = appdataCleanupNgComposeConfigPaths($config);
-      foreach ( array_merge($paths['mounts'],$paths['files'],$paths['mentions']) as $path ) {
-        if ( appdataCleanupNgHasControlChars($path) ) { $uncertain = true; continue; }
-        appdataCleanupNgProtectFolderOf($protected,$path);
-      }
-      foreach ( $paths['mounts'] as $path ) if ( appdataCleanupNgCoversAppdataRoot($path) ) $rootBound = true;
-      foreach ( appdataCleanupNgComposeNamedPaths(array_filter($files,"is_file"),$env) as $path ) appdataCleanupNgProtectFolderOf($protected,$path);
-      continue;
-    }
-    foreach ( $files as $f ) {
-      if ( ! is_file($f) ) continue;
-      $contents = @file_get_contents($f);
-      if ( $contents === false ) { $uncertain = true; continue; }   # an existing compose file we couldn't read -> protection is incomplete
-      if ( $contents === "" ) continue;
-      $contents = appdataCleanupNgExpandEnv(str_replace("\r","",$contents),$env);   # a Windows line ending is not part of a path
-      # a trailing YAML comment ("- /x:/y   # note") is not part of the path; a " #" inside quotes is
-      $contents = preg_replace_callback('/^([^\n]*?)[ \t]+#[^\n]*$/m',function($m) {
-        return ( substr_count($m[1],'"') % 2 === 0 && substr_count($m[1],"'") % 2 === 0 ) ? $m[1] : $m[0];
-      },$contents);
-      # a VOLUME BIND whose host side still has an unresolved ${VAR}/$VAR means we can't know which appdata folder it maps to.
-      # scope to bind positions to avoid disabling fsscan on unrelated $VARs: short syntax "- ${VAR}/path:/container"
-      # (the [^\n:=] host guard excludes "KEY=val" environment items), and long syntax "source: ${VAR}...",
-      # each also inside a one-line list or map ("volumes: [${VAR}/x:/y]", "{type: bind, source: ${VAR}}")
-      if ( preg_match('#(?:^[ \t]*-|[\[,])[ \t]*["\']?[^\n:=,\]]*\$\{?[A-Za-z_][^\n:]*:/#m',$contents)
-        || preg_match('#(?:^[ \t]*(?:-[ \t]*)?|[{,][ \t]*)source[ \t]*:[ \t]*["\']?[^\n,}]*\$[A-Za-z_{]#m',$contents) ) {
-        $uncertain = true;
-      }
-      # A bind host we cannot trust never matches the root pattern below, so it would be
-      # silently unprotected. Check every bind host up front with the shared predicates.
-      # a quoted host may hold the other quote ("/x/Bob's app"); a one-line list or map holds binds too
-      if ( preg_match_all('#(?:^[ \t]*(?:-[ \t]*(?:source[ \t]*:)?|source[ \t]*:)|[\[,][ \t]*|[{,][ \t]*source[ \t]*:)[ \t]*(?:"(/[^\n:"]*)|\'(/[^\n:\']*)|(/[^\n:"\',\]}]*))#m',$contents,$hosts,PREG_SET_ORDER) ) {
-        foreach ( $hosts as $h ) {
-          $raw = ($h[1] ?? "").($h[2] ?? "").($h[3] ?? "");
-          $host = rtrim($raw,"/");
-          if ( appdataCleanupNgHasControlChars($host) || preg_match('#(^|/)\.\.(/|$)#',$host) ) { $uncertain = true; continue; }
-          if ( appdataCleanupNgCoversAppdataRoot($raw) ) $rootBound = true;
-          appdataCleanupNgProtectFolderOf($protected,$host);
-        }
-      }
-      # included or extended files are not read here, so their binds would go unprotected
-      if ( preg_match('#^[ \t]*["\']?(?:include|extends)["\']?[ \t]*:#m',$contents) ) $uncertain = true;
-      # relative bind hosts resolve against the compose source; only binds ("- ./x:/y", "source: ./x"), not env_file items
-      $rel = array();
-      if ( preg_match_all('#(?:^[ \t]*-|[\[,])[ \t]*["\']?(\.\.?(?:/[^\n:"\',\]]*)?):#m',$contents,$short) ) $rel = $short[1];
-      if ( preg_match_all('#^[ \t]*(?:-[ \t]*)?source[ \t]*:[ \t]*["\']?(\.\.?(?:/[^\n"\']*)?)["\']?[ \t]*$#m',$contents,$long) ) $rel = array_merge($rel,$long[1]);
-      foreach ( $rel as $host ) {
-        $host = rtrim($host,"/");
-        if ( appdataCleanupNgHasControlChars($host) || preg_match('#(^|/)\.\.(/|$)#',$host) ) { $uncertain = true; continue; }
-        foreach ( $bases as $b ) {
-          if ( appdataCleanupNgCoversAppdataRoot($b.substr($host,1)) ) $rootBound = true;
-          appdataCleanupNgProtectFolderOf($protected,$b.substr($host,1));
-        }
-      }
-      if ( preg_match_all($pattern,$contents,$matches,PREG_SET_ORDER) ) {
-        foreach ( $matches as $hit ) {
-          # belt and braces: the pre-check above already marked such a file uncertain
-          if ( appdataCleanupNgHasControlChars($hit[2]) || preg_match('#(^|/)\.\.(/|$)#',$hit[2]) ) {
-            $uncertain = true;
-            continue;
-          }
-          $firstSeg = strtok($hit[2],"/");         # appdata folder name under the root
-          if ( $firstSeg === false || $firstSeg === "" ) continue;
-          $full = $hit[1]."/".$firstSeg;
-          foreach ( appdataCleanupNgPathViews($full) as $c ) $protected[$c] = true;
-        }
-      }
-      # fail-safe: host root is an unresolved ${var}/$var but its next segment names an existing appdata folder, so protect it conservatively
-      if ( preg_match_all('#\$(?:\{[A-Za-z_][A-Za-z0-9_]*(?::?-[^}]*)?\}|[A-Za-z_][A-Za-z0-9_]*)/([A-Za-z0-9][A-Za-z0-9._-]*)#',$contents,$uns,PREG_SET_ORDER) ) {
-        foreach ( $uns as $uh ) {
-          $seg = $uh[1];
-          foreach ( $roots as $r ) {
-            $cand = $r."/".$seg;
-            if ( @is_dir($cand) ) {
-              foreach ( appdataCleanupNgPathViews($cand) as $c ) $protected[$c] = true;
-            }
-          }
-        }
-      }
-    }
+    $trusted = is_array($config) ? appdataCleanupNgComposeProtectConfig($config,$files,$env,$protected,$rootBound)
+      : appdataCleanupNgComposeProtectByPattern($files,$env,$bases,$protected,$rootBound);
+    if ( $config === false || ! $trusted ) $uncertain = true;
   }
   return array_keys($protected);
 }
