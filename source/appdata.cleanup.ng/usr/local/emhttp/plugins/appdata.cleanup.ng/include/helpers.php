@@ -655,13 +655,25 @@ function appdataCleanupNgComposeProtectRootMatches($contents,$pattern,$roots,&$p
   return $trusted;
 }
 
+# protect what a stack's compose files bind, read by pattern; false when any of it can't be read or trusted
+function appdataCleanupNgComposeProtectByPattern($files,$env,$bases,&$protected) {
+  $roots = appdataCleanupNgAppdataRoots();
+  $pattern = appdataCleanupNgComposeRootPattern($roots);
+  $trusted = true;
+  foreach ( array_filter($files,"is_file") as $f ) {
+    $contents = appdataCleanupNgComposeText($f,$env);
+    if ( $contents === false ) { $trusted = false; continue; }   # an existing compose file we couldn't read
+    $trusted = ! appdataCleanupNgComposeTextUnreadable($contents) && $trusted;
+    $trusted = appdataCleanupNgComposeProtectHosts($contents,$bases,$protected) && $trusted;
+    $trusted = appdataCleanupNgComposeProtectRootMatches($contents,$pattern,$roots,$protected) && $trusted;
+  }
+  return $trusted;
+}
+
 function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
   $uncertain = false;   # set true when a stack can't be fully read -> callers must fail closed
   $projectsDir = "/boot/config/plugins/compose.manager/projects";
-  if ( ! is_dir($projectsDir) ) return array();
-  $roots = appdataCleanupNgAppdataRoots();
-  if ( empty($roots) ) return array();
-  $pattern = appdataCleanupNgComposeRootPattern($roots);
+  if ( ! is_dir($projectsDir) || ! appdataCleanupNgAppdataRoots() ) return array();
   $protected = array();
   foreach ( (array)glob($projectsDir."/*",GLOB_ONLYDIR) as $proj ) {
     $project = appdataCleanupNgComposeProject($proj);
@@ -670,14 +682,7 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
     $bases = array_unique(array_filter(array($base,(string)@realpath($base))));
     # the stack's own folder, and the folders of its env file and compose files: the stack breaks without them
     foreach ( array_merge($bases,array_filter(array_merge(array($envFile),$files),"is_file")) as $used ) appdataCleanupNgProtectFolderOf($protected,$used);
-    foreach ( array_filter($files,"is_file") as $f ) {
-      $contents = appdataCleanupNgComposeText($f,$env);
-      if ( $contents === false ) { $uncertain = true; continue; }   # an existing compose file we couldn't read
-      $trusted = ! appdataCleanupNgComposeTextUnreadable($contents);
-      $trusted = appdataCleanupNgComposeProtectHosts($contents,$bases,$protected) && $trusted;
-      $trusted = appdataCleanupNgComposeProtectRootMatches($contents,$pattern,$roots,$protected) && $trusted;
-      if ( ! $trusted ) $uncertain = true;
-    }
+    if ( ! appdataCleanupNgComposeProtectByPattern($files,$env,$bases,$protected) ) $uncertain = true;
   }
   return array_keys($protected);
 }
