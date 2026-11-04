@@ -152,11 +152,11 @@ function toggleSelectAll() {
 }
 
 function ignoreThis(el) {
-	$.post(caURL,{action:'ignorePath',path:$(el).data('path'),csrf_token:csrf_token},acngIgnoreSaved);
+	$.post(caURL,{action:'ignorePath',path:$(el).data('path'),csrf_token:csrf_token}).done(acngIgnoreSaved).fail(function(){ acngIgnoreSaved(""); });
 }
 
 function unignoreThis(el) {
-	$.post(caURL,{action:'unignorePath',path:$(el).data('path'),csrf_token:csrf_token},acngIgnoreSaved);
+	$.post(caURL,{action:'unignorePath',path:$(el).data('path'),csrf_token:csrf_token}).done(acngIgnoreSaved).fail(function(){ acngIgnoreSaved(""); });
 }
 
 function acngIgnoreSaved(data) {

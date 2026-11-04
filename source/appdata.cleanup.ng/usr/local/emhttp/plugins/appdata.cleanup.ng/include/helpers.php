@@ -570,7 +570,7 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
     list($base,$files,$env,$envFile) = $project;
     # the stack's own folder, and the folders of its env file and compose files: the stack breaks without them
     $bases = array_unique(array_filter(array($base,(string)@realpath($base))));
-    foreach ( array_merge($bases,array_filter(array_merge(array($envFile),$files),"is_file")) as $used ) {
+    foreach ( array_merge($bases,array_map("dirname",array_filter(array_merge(array($envFile),$files),"is_file"))) as $used ) {
       foreach ( appdataCleanupNgPathViews($used) as $view ) {
         $folder = appdataCleanupNgAppdataFolderOf($view);
         if ( $folder !== "" ) foreach ( appdataCleanupNgPathViews($folder) as $c ) $protected[$c] = true;
@@ -582,18 +582,24 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
       if ( $contents === false ) { $uncertain = true; continue; }   # an existing compose file we couldn't read -> protection is incomplete
       if ( $contents === "" ) continue;
       $contents = appdataCleanupNgExpandEnv($contents,$env);
+      # a trailing YAML comment ("- /x:/y   # note") is not part of the path; a " #" inside quotes is
+      $contents = preg_replace_callback('/^([^\n]*?)[ \t]+#[^\n]*$/m',function($m) {
+        return ( substr_count($m[1],'"') % 2 === 0 && substr_count($m[1],"'") % 2 === 0 ) ? $m[1] : $m[0];
+      },$contents);
       # a VOLUME BIND whose host side still has an unresolved ${VAR}/$VAR means we can't know which appdata folder it maps to.
       # scope to bind positions to avoid disabling fsscan on unrelated $VARs: short syntax "- ${VAR}/path:/container"
       # (the [^\n:=] host guard excludes "KEY=val" environment items), and long syntax "source: ${VAR}...".
       if ( preg_match('#^[ \t]*-[ \t]*["\']?[^\n:=]*\$\{?[A-Za-z_][^\n:]*:/#m',$contents)
-        || preg_match('#^[ \t]*source[ \t]*:[ \t]*["\']?[^\n]*\$[A-Za-z_{]#m',$contents) ) {
+        || preg_match('#^[ \t]*(?:-[ \t]*)?source[ \t]*:[ \t]*["\']?[^\n]*\$[A-Za-z_{]#m',$contents) ) {
         $uncertain = true;
       }
       # A bind host we cannot trust never matches the root pattern below, so it would be
       # silently unprotected. Check every bind host up front with the shared predicates.
-      if ( preg_match_all('#^[ \t]*(?:-[ \t]*(?:source[ \t]*:)?|source[ \t]*:)[ \t]*["\']?(/[^\n:"\']*)#m',$contents,$hosts,PREG_SET_ORDER) ) {
+      # a quoted host may hold the other quote ("/x/Bob's app")
+      if ( preg_match_all('#^[ \t]*(?:-[ \t]*(?:source[ \t]*:)?|source[ \t]*:)[ \t]*(?:"(/[^\n:"]*)|\'(/[^\n:\']*)|(/[^\n:"\']*))#m',$contents,$hosts,PREG_SET_ORDER) ) {
         foreach ( $hosts as $h ) {
-          $host = rtrim($h[1],"/");
+          # /mnt/user0 is the array-only view of the same share
+          $host = preg_replace('#^/mnt/user0(?=/)#','/mnt/user',rtrim(($h[1] ?? "").($h[2] ?? "").($h[3] ?? ""),"/"));
           if ( appdataCleanupNgHasControlChars($host) || preg_match('#(^|/)\.\.(/|$)#',$host) ) { $uncertain = true; continue; }
           # a bind on any pool or disk names an appdata folder too: /mnt/nvme/appdata/x is /mnt/user/appdata/x
           $folder = appdataCleanupNgAppdataFolderOf($host);
@@ -604,7 +610,7 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
       if ( preg_match('#^[ \t]*["\']?(?:include|extends)["\']?[ \t]*:#m',$contents) ) $uncertain = true;
       # relative bind hosts resolve against the compose source; only binds ("- ./x:/y", "source: ./x"), not env_file items
       $rel = array();
-      if ( preg_match_all('#^[ \t]*-[ \t]*["\']?(\.\.?(?:/[^\n:"\']*)?):#m',$contents,$short) ) $rel = $short[1];
+      if ( preg_match_all('#(?:^[ \t]*-|[\[,])[ \t]*["\']?(\.\.?(?:/[^\n:"\',\]]*)?):#m',$contents,$short) ) $rel = $short[1];
       if ( preg_match_all('#^[ \t]*(?:-[ \t]*)?source[ \t]*:[ \t]*["\']?(\.\.?(?:/[^\n"\']*)?)["\']?[ \t]*$#m',$contents,$long) ) $rel = array_merge($rel,$long[1]);
       foreach ( $rel as $host ) {
         $host = rtrim($host,"/");

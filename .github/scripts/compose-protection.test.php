@@ -58,6 +58,17 @@ $cases = array(
     "$projects/p/docker-compose.yml" => "services: {}\n", "$projects/p/extra_compose_files" => "$appdata/shared/extra.yml\n", "$appdata/shared/extra.yml" => "services: {}\n",
   ), array("shared"), false),
   "an env_file above the folder" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    env_file:\n      - ../shared.env\n    volumes:\n      - /mnt/user/appdata/envf:/config\n"), array("envf"), false),
+  "a commented pool bind" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - type: bind\n        source: /mnt/nvme/appdata/poolc   # main data\n        target: /config\n"), array("poolc"), false),
+  "a commented relative bind" => array(array(
+    "$projects/p/indirect" => $appdata, "$appdata/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - type: bind\n        source: ./relc   # config\n        target: /config\n",
+  ), array("relc"), false),
+  "a bind through /mnt/user0" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - /mnt/user0/appdata/arrapp:/config\n"), array("arrapp"), false),
+  "a one-line volume list" => array(array(
+    "$projects/p/indirect" => $appdata, "$appdata/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes: [\"./flowapp:/config\", \"./second:/x\"]\n",
+  ), array("flowapp", "second"), false),
+  "an apostrophe in a quoted path" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \"/mnt/nvme/appdata/Bob's app:/config\"\n"), array("Bob's app"), false),
+  "a quoted path with a hash" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \"/mnt/nvme/appdata/Plex #2:/config\"   # second server\n"), array("Plex #2"), false),
+  "an unset variable led by - source" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - source: \${APPDIR}\n        target: /config\n        type: bind\n"), array(), true),
   "a missing compose file" => array(array("$projects/p/indirect" => "$appdata/gone/prod.yml", "$projects/p/indirect_mode" => "file"), array(), true),
   "a missing compose folder" => array(array("$projects/p/indirect" => "$appdata/gone"), array(), true),
   "an unknown mode" => array(array("$projects/p/indirect" => "$appdata/home", "$projects/p/indirect_mode" => "weird", "$appdata/home/docker-compose.yml" => "services: {}\n"), array(), true),
@@ -74,6 +85,7 @@ foreach ( $cases as $name => $case ) {
   foreach ( $files as $path => $body ) put($path, $body);
   $uncertain = null;
   $protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+  foreach ( $protected as $path ) check("$name: protects a folder, not a file: $path", ! is_file($path));
   check("$name: uncertain", $uncertain === $uncertainWanted, json_encode(array("uncertain" => $uncertain, "protected" => $protected)));
   foreach ( $folders as $folder ) check("$name: protects $folder", in_array("$appdata/$folder", $protected, true), json_encode($protected));
 }
