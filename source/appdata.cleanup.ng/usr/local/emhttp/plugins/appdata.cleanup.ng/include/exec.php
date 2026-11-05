@@ -129,8 +129,8 @@ case 'getOrphanAppdata':
   $availableVolumes = $tempArray;
 
   # remove folders claimed by docker-compose stacks (Compose Manager), incl. 'down' stacks
-  $composeUncertain = false;
-  $composeRootBound = false;
+  $composeUncertain = array();
+  $composeRootBound = array();
   $composeProtected = appdataCleanupNgComposeReferencedPaths($composeUncertain,$composeRootBound);
   if ( ! empty($composeProtected) ) {
     $composeSet = array_flip($composeProtected);
@@ -154,19 +154,14 @@ case 'getOrphanAppdata':
   # opt-in: filesystem scan for template-less folders not covered by any template, container, or compose stack
   $fsOrphans = array();
   $fsScanSkipped = "";
+  $fsScanWarning = "";
   if ( getPost("fsscan","no") === "yes" ) {
-    # a container that bind-mounts an entire appdata root makes every child "in use"; offering template-less children then is unsafe
-    $rootMounted = $composeRootBound;   # a stack that binds a whole root counts like a container that does
-    foreach ( $info as $installedDocker ) {
-      foreach ( (array)($installedDocker['Volumes'] ?? array()) as $volume ) {
-        if ( appdataCleanupNgCoversAppdataRoot(explode(":",(string)$volume)[0]) ) { $rootMounted = true; break 2; }
-      }
-    }
     if ( $composeUncertain ) {
-      $fsScanSkipped = "A Docker Compose stack can't be fully read (docker compose could not read it, an unset variable in a path, or a compose location that is missing or unreadable), so the scan can't tell which folders are in use. Check the stacks in Compose Manager.";
-    } else if ( $rootMounted ) {
-      $fsScanSkipped = "A container (running or stopped) or a Compose stack bind-mounts an entire appdata root, so every folder is in use. The filesystem scan is disabled to avoid offering in-use folders.";
+      $fsScanSkipped = "A Docker Compose stack can't be fully read, so the scan can't tell which folders are in use (".implode("; ",$composeUncertain)."). Fix or remove the stack in Compose Manager.";
     } else {
+      # a container or stack that mounts a whole appdata root can reach every folder: the scan runs, and says which
+      $rootMounters = array_unique(array_merge(appdataCleanupNgRootMounters($info),$composeRootBound));
+      if ( $rootMounters ) $fsScanWarning = implode(", ",$rootMounters)." can reach every appdata folder through a whole-share mount. Check that none of these folders is theirs.";
       $coveredSegs = $templateSegs;
       foreach ( $inUseBy as $u => $unused ) { $s = appdataCleanupNgOwnerSegment($u); if ( $s !== "" ) $coveredSegs[$s] = true; }
       foreach ( $composeProtected as $p ) { $s = appdataCleanupNgOwnerSegment($p); if ( $s !== "" ) $coveredSegs[$s] = true; }
@@ -224,20 +219,22 @@ case 'getOrphanAppdata':
     echo "<div class='acng-empty'>No orphaned appdata folders found.</div>";
   } else {
     echo "<div class='acng-list'>";
-    foreach ($availableVolumes as $volume) {
-      # badge (don't hide) a real orphan that also sits under a broad in-use bind mount, so the user is warned it may be live
-      $mountedBy = array();   # container name -> parent-mount set that reaches this folder
-      $cand = appdataCleanupNgCanon($volume['HostDir']);
+    # badge (don't hide) a real orphan that also sits under a broad in-use bind mount, so the user is warned it may be live
+    $mountedBy = function($hostDir) use ($inUseBy) {
+      $by = array();   # container name -> parent-mount set that reaches this folder
+      $cand = appdataCleanupNgCanon($hostDir);
       foreach ($inUseBy as $u => $containers) {
         if ( $u !== $cand && appdataCleanupNgPathUnder($cand,$u) ) {
-          foreach ($containers as $n => $paths) $mountedBy[$n] = isset($mountedBy[$n]) ? $mountedBy[$n] + $paths : $paths;
+          foreach ($containers as $n => $paths) $by[$n] = isset($by[$n]) ? $by[$n] + $paths : $paths;
         }
       }
-      echo $renderRow($volume,false,$mountedBy);
-    }
+      return $by;
+    };
+    foreach ($availableVolumes as $volume) echo $renderRow($volume,false,$mountedBy($volume['HostDir']));
     if ( ! empty($fsOrphans) ) {
       echo "<div class='acng-section'>&#9888; No saved template &mdash; found by filesystem scan. Verify carefully before deleting.</div>";
-      foreach ($fsOrphans as $volume) echo $renderRow($volume,true);
+      if ( $fsScanWarning !== "" ) echo "<div class='acng-section'>&#9888; ".htmlspecialchars($fsScanWarning)."</div>";
+      foreach ($fsOrphans as $volume) echo $renderRow($volume,true,$mountedBy($volume['HostDir']));
     }
     echo "</div>";
   }
@@ -300,13 +297,13 @@ case "deleteAppdata":
   # confirms. Re-check against the live mounts and the compose set instead of trusting it.
   $inUseNow = appdataCleanupNgInUsePaths($liveDel);
   $composeNow = array();
-  $composeUncertainDel = false;
+  $composeUncertainDel = array();
   foreach ( appdataCleanupNgComposeReferencedPaths($composeUncertainDel) as $cp ) $composeNow[$cp] = true;
   # fail closed: a stack that can't be fully read (see appdataCleanupNgComposeReferencedPaths) means the
   # protected set is incomplete, so we cannot prove a stopped stack is not being deleted
   if ( $composeUncertainDel ) {
-    appdataCleanupNgLog("deleteAppdata refused: compose protection incomplete (a stack could not be fully read)",LOG_WARNING);
-    echo "refused: compose protection is incomplete, so a stopped stack cannot be ruled out";
+    appdataCleanupNgLog("deleteAppdata refused: compose protection incomplete (".implode("; ",$composeUncertainDel).")",LOG_WARNING);
+    echo "refused: compose protection is incomplete (".implode("; ",$composeUncertainDel)."), so a stopped stack cannot be ruled out";
     break;
   }
   $refused = array();

@@ -2,9 +2,11 @@
 // Compose protection and the ignore list through the real helpers, on the real paths they read.
 // It writes /boot/config and /mnt/user/appdata, so it runs only in a throwaway container: docker run ... php:8.2-cli
 require __DIR__ . "/throwaway-container.php";
-acngTestRefuseUnlessThrowaway(array("/boot/config", "/mnt/user", "/tmp/acng-cwd"));
+acngTestRefuseUnlessThrowaway(array("/boot/config", "/mnt/user", "/tmp/acng-cwd", "/var/log/plugins"));
 $helpers = $argv[1] ?? __DIR__ . "/../../source/appdata.cleanup.ng/usr/local/emhttp/plugins/appdata.cleanup.ng/include/helpers.php";
 require $helpers;
+@mkdir("/var/log/plugins", 0755, true);
+touch("/var/log/plugins/compose.manager.plg");   // Compose Manager installed
 
 $fail = 0;
 function check($name, $ok, $detail = "") {
@@ -123,7 +125,7 @@ foreach ( $cases as $name => $case ) {
   $uncertain = null;
   $protected = appdataCleanupNgComposeReferencedPaths($uncertain);
   foreach ( $protected as $path ) check("$name: protects a folder, not a file: $path", ! is_file($path));
-  check("$name: uncertain", $uncertain === $uncertainWanted, json_encode(array("uncertain" => $uncertain, "protected" => $protected)));
+  check("$name: uncertain", ($uncertain !== array()) === $uncertainWanted, json_encode(array("uncertain" => $uncertain, "protected" => $protected)));
   foreach ( $folders as $folder ) check("$name: protects $folder", in_array("$appdata/$folder", $protected, true), json_encode($protected));
 }
 
@@ -151,7 +153,7 @@ foreach ( $unreadable as $name => $files ) {
   $child = proc_open(array(PHP_BINARY, "-r", "posix_setgid(65534); posix_setuid(65534); require " . var_export($helpers, true) . "; \$u = null; \$p = appdataCleanupNgComposeReferencedPaths(\$u); echo json_encode(array(\$u, \$p));"), array(1 => array("pipe", "w")), $pipes);
   $said = stream_get_contents($pipes[1]);
   proc_close($child);
-  check("an unreadable $name: uncertain", (json_decode($said, true)[0] ?? null) === true, $said);
+  check("an unreadable $name: uncertain", ! empty(json_decode($said, true)[0] ?? null), $said);
 }
 
 // A compose source reached through a symlink protects the real folder, and its relative binds
@@ -163,7 +165,7 @@ symlink("$appdata/linked", "/mnt/user/stacks/linked");
 put("$projects/p/indirect", "/mnt/user/stacks/linked");
 $uncertain = null;
 $protected = appdataCleanupNgComposeReferencedPaths($uncertain);
-check("a symlinked compose source", $uncertain === false && in_array("$appdata/linked", $protected, true), json_encode(array($uncertain, $protected)));
+check("a symlinked compose source", $uncertain === array() && in_array("$appdata/linked", $protected, true), json_encode(array($uncertain, $protected)));
 
 // A relative envpath is relative to the project folder, wherever PHP happens to run
 wipe("/boot/config/plugins/compose.manager"); wipe("/tmp/acng-cwd");
@@ -176,6 +178,25 @@ $uncertain = null;
 $protected = appdataCleanupNgComposeReferencedPaths($uncertain);
 chdir($cwd);
 check("a relative envpath", in_array("$appdata/right", $protected, true) && ! in_array("$appdata/wrong", $protected, true), json_encode($protected));
+
+// Each stack that can't be read is named with why; with Compose Manager uninstalled, the stacks it left are ignored
+wipe("/boot/config/plugins/compose.manager"); wipe($appdata);
+put("$projects/gone/indirect", "/mnt/user/data/composetest");
+put("$projects/p/docker-compose.yml", $bind("kept"));
+$uncertain = null;
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+check("a missing compose location: named with why", $uncertain === array("gone: its compose location /mnt/user/data/composetest is missing or can't be read") && in_array("$appdata/kept", $protected, true), json_encode(array($uncertain, $protected)));
+unlink("/var/log/plugins/compose.manager.plg");
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+touch("/var/log/plugins/compose.manager.plg");
+check("Compose Manager uninstalled: the stacks it left are ignored", $uncertain === array() && $protected === array(), json_encode(array($uncertain, $protected)));
+
+// The containers whose binds reach every appdata folder
+$mounters = appdataCleanupNgRootMounters(array(
+  array("Name" => "FileZilla", "Volumes" => array("/mnt/user:/data:rw")), array("Name" => "app", "Volumes" => array("/mnt/user/appdata/app:/config:rw")),
+  array("Name" => "notifiarr", "Volumes" => array("/mnt/cache:/cache:ro", "/mnt/user:/user:ro")), array("Name" => "noVolumes"),
+));
+check("whole-share mounts named once each", $mounters === array("FileZilla", "notifiarr"), json_encode($mounters));
 
 // The ignore list
 $ignore = appdataCleanupNgIgnoreFile();
