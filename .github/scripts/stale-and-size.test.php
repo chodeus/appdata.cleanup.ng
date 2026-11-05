@@ -3,8 +3,8 @@
 // It writes /boot/config, /mnt/user/appdata and /var/lib/appdata.cleanup.ng, so it runs only in a throwaway container:
 // docker run ... -e ACNG_TEST_CA_HELPERS=<CA's include/helpers.php> php:8.2-cli php .github/scripts/stale-and-size.test.php
 if ( ! is_file("/.dockerenv") ) { fwrite(STDERR, "refusing to run outside a container: this test writes /boot/config, /mnt/user and /var/lib\n"); exit(2); }
-$ca = realpath((string)getenv("ACNG_TEST_CA_HELPERS"));
-if ( $ca === false ) { fwrite(STDERR, "ACNG_TEST_CA_HELPERS must name Community Applications' include/helpers.php\n"); exit(2); }
+$ca = (string)getenv("ACNG_TEST_CA_HELPERS");
+if ( ! is_file($ca) ) { fwrite(STDERR, "ACNG_TEST_CA_HELPERS must name Community Applications' include/helpers.php\n"); exit(2); }
 require $ca;
 $helpers = realpath($argv[1] ?? __DIR__ . "/../../source/appdata.cleanup.ng/usr/local/emhttp/plugins/appdata.cleanup.ng/include/helpers.php");
 require $helpers;
