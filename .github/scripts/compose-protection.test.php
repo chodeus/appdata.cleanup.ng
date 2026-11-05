@@ -96,6 +96,14 @@ $cases = array(
     "$projects/p/.env" => "APPDIR=/mnt/user/appdata/firstset\nAPPDIR=/mnt/user/appdata/lastset\n",
     "$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR}:/config\n",
   ), array("lastset"), false),
+  "an inline comment in the env file" => array(array(
+    "$projects/p/.env" => "APPDIR=/mnt/user/appdata # root\n",
+    "$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR}/inlinecmt:/config\n",
+  ), array("inlinecmt"), false),
+  "a quoted env value, then a comment" => array(array(
+    "$projects/p/.env" => "APPDIR=\"/mnt/user/appdata\" # root\n",
+    "$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR}/quotedcmt:/config\n",
+  ), array("quotedcmt"), false),
   "a missing compose file" => array(array("$projects/p/indirect" => "$appdata/gone/prod.yml", "$projects/p/indirect_mode" => "file"), array(), true),
   "a missing compose folder" => array(array("$projects/p/indirect" => "$appdata/gone"), array(), true),
   "file mode naming a folder" => array(array("$projects/p/indirect" => "$appdata/home", "$projects/p/indirect_mode" => "file", "$appdata/home/docker-compose.yml" => "services: {}\n"), array(), true),
@@ -117,6 +125,15 @@ foreach ( $cases as $name => $case ) {
   check("$name: uncertain", $uncertain === $uncertainWanted, json_encode(array("uncertain" => $uncertain, "protected" => $protected)));
   foreach ( $folders as $folder ) check("$name: protects $folder", in_array("$appdata/$folder", $protected, true), json_encode($protected));
 }
+
+// Env values as docker compose v5.7.0 reads them (each probed with "docker compose config")
+foreach ( array(
+  'V=/mnt/a # comment' => '/mnt/a', 'V=/mnt/b#nocomment' => '/mnt/b#nocomment', 'V="/mnt/c" # comment' => '/mnt/c',
+  "V='/mnt/d' # comment" => '/mnt/d', 'V="/mnt/e # inside"' => '/mnt/e # inside', "V=/mnt/f\t# tab" => "/mnt/f\t# tab",
+  'V=  /mnt/g  ' => '/mnt/g', 'V= # only a comment' => '# only a comment', 'V="/mnt/m"#nospace' => '/mnt/m',
+  'V="/mnt/o\"q" # c' => '/mnt/o"q', 'V="/mnt/a\\\\b"' => '/mnt/a\\b', 'V="/mnt/a\$b"' => '/mnt/a$b', 'V="/mnt/a\qb"' => '/mnt/a\qb',
+  "V='/mnt/a\\nb'" => '/mnt/a\nb', 'V = /mnt/s' => '/mnt/s',
+) as $line => $want ) check("env value of $line", (appdataCleanupNgEnvLine($line)[1] ?? null) === $want, json_encode(appdataCleanupNgEnvLine($line)));
 
 // A file the scan needs that is there but can't be read leaves the stack uncertain: a nobody process reads a root-only one
 $defaulted = "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR:-/mnt/user/appdata/envdef}:/config\n";

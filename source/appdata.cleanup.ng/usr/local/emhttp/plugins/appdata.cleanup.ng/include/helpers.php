@@ -583,9 +583,20 @@ function appdataCleanupNgEnvLine($line) {
   if ( strpos($line,"export ") === 0 ) $line = trim(substr($line,7));
   $eq = strpos($line,"=");
   if ( $eq === false ) return null;
-  $v = trim(substr($line,$eq+1));
-  if ( strlen($v) >= 2 && ($v[0] === '"' || $v[0] === "'") && substr($v,-1) === $v[0] ) $v = substr($v,1,-1);
-  return array(trim(substr($line,0,$eq)),$v);
+  return array(trim(substr($line,0,$eq)),appdataCleanupNgEnvValue(ltrim(substr($line,$eq+1))));
+}
+
+# an env value as compose reads it: what its quotes hold (escapes undone in double quotes), else up to a " #" comment
+function appdataCleanupNgEnvValue($v) {
+  if ( preg_match("/^'([^']*)'/",$v,$m) ) return $m[1];
+  if ( preg_match('/^"((?:[^"\\\\]|\\\\.)*)"/s',$v,$m) ) {
+    return preg_replace_callback('/\\\\(.)/s',function($e) {
+      $escapes = array("n" => "\n","t" => "\t","\\" => "\\",'"' => '"','$' => '$');
+      return $escapes[$e[1]] ?? $e[0];
+    },$m[1]);
+  }
+  $cut = strpos($v," #");
+  return rtrim($cut === false ? $v : substr($v,0,$cut));
 }
 
 # add the variables an env file sets to those $env doesn't set yet; in the file the last one wins, as compose reads it.
@@ -668,9 +679,8 @@ function appdataCleanupNgComposeExtraFiles($source,$envFile,$composeEnv,$extraLi
   return $files;
 }
 
-# [compose source folder, compose files, variable sets, env file] as Compose Manager runs the project (indirect file or folder,
-# extra_compose_files, COMPOSE_FILE, envpath); null when its compose location, a settings file or an env file can't be read,
-# so callers fail closed
+# [compose source folder, compose files, variable sets, env file] as Compose Manager runs the project; null when its
+# compose location, a settings file or an env file can't be read, so callers fail closed
 function appdataCleanupNgComposeProject($proj) {
   $meta = appdataCleanupNgProjectMeta($proj);
   if ( $meta === null ) return null;
