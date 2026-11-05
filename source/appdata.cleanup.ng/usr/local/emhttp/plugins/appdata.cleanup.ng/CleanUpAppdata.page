@@ -170,6 +170,14 @@ function acngIgnoreUnconfirmed() {
 	loadAppdata();
 }
 
+// "refused N of M:" then one line per item, each saying what to do; anything else is a refusal of the whole request
+function acngShowRefusal(reply) {
+	var m = /^refused (\d+) of (\d+):\s*([\s\S]*)$/.exec(reply);
+	var partial = m !== null && m[1] !== m[2];
+	var text = (m ? m[3] : reply) || "<?tr("The server did not answer")?>";
+	swal({title: partial ? "<?tr("Deletion incomplete")?>" : "<?tr("Nothing was deleted")?>", text: text.split("\n").map(acngEscapeHtml).join("<br>"), type: partial ? "warning" : "error", html: true});
+}
+
 function deleteSelectedTemplates() {
 	var files = [];
 	$('.staletpl:checked').each(function(){ files.push($(this).val()); });
@@ -184,11 +192,7 @@ function deleteSelectedTemplates() {
 	}, function() {
 		$.post(caURL,{action:'deleteTemplates',files:files,csrf_token:csrf_token},function(data) {
 			var reply = $.trim(String(data || ""));
-			if (reply.indexOf("refused ") === 0) {
-				swal("<?tr("Deletion incomplete")?>",reply,"warning");
-			} else if ( ! /^deleted \d+$/.test(reply)) {
-				swal("<?tr("Nothing was deleted")?>",reply || "<?tr("The server did not answer")?>","error");
-			}
+			if ( ! /^deleted \d+$/.test(reply)) acngShowRefusal(reply);
 			loadAppdata();
 		});
 	});
@@ -271,14 +275,8 @@ function deleteAppdata() {
 		$.post(caURL,{action:'deleteAppdata',paths:paths,zfs:($('#zfsEnable').is(':checked')?'yes':'no'),csrf_token:csrf_token},function(data) {
 			// the server answers "deleted" only when every path was removed; anything else is a refusal
 			var reply = $.trim(String(data || ""));
-			if (reply === "deleted") {
-				swal("<?tr("Deleted")?>","","success");
-			} else if (reply.indexOf("refused ") === 0 && reply.indexOf("refused 0 ") !== 0) {
-				// "refused N of M": some may still have been deleted, so do not claim nothing was
-				swal("<?tr("Deletion incomplete")?>",reply,"warning");
-			} else {
-				swal("<?tr("Nothing was deleted")?>",reply || "<?tr("The server did not answer")?>","error");
-			}
+			if (reply === "deleted") swal("<?tr("Deleted")?>","","success");
+			else acngShowRefusal(reply);
 			loadAppdata();
 		});
 	});

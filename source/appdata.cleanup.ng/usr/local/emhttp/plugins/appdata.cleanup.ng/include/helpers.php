@@ -1076,6 +1076,12 @@ function appdataCleanupNgComposeProtectConfig($config,$files,$envs,&$protected,&
   return $trusted;
 }
 
+# a refused delete when Docker can't say which folders are in use
+function appdataCleanupNgDockerRefusal($running) {
+  return $running ? "Docker didn't answer, so the plugin can't tell which folders are in use. Try again in a minute"
+    : "Docker isn't running, so the plugin can't tell which folders are in use. Start Docker in Settings, Docker, then try again";
+}
+
 # names of the containers with a bind that covers a whole appdata root, so they can reach every folder
 function appdataCleanupNgRootMounters($containers) {
   $names = array();

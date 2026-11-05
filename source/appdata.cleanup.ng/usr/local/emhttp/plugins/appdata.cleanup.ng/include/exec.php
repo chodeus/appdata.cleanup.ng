@@ -285,13 +285,13 @@ case "deleteAppdata":
   # rather than trust the client's submitted paths while the in-use set is unknowable (mirrors deleteTemplates)
   if ( ! is_dir("/var/lib/docker/tmp") ) {
     appdataCleanupNgLog("deleteAppdata refused: docker service not running (can't confirm orphan status)",LOG_WARNING);
-    echo "docker not running"; break;
+    echo appdataCleanupNgDockerRefusal(false); break;
   }
   $dcDel = new DockerClient();
   $liveDel = $dcDel->getDockerContainers();
   if ( empty($liveDel) && ! appdataCleanupNgContainerListTrustworthy($dcDel) ) {
     appdataCleanupNgLog("deleteAppdata refused: docker engine unreachable (can't confirm orphan status)",LOG_WARNING);
-    echo "docker unreachable"; break;
+    echo appdataCleanupNgDockerRefusal(true); break;
   }
   # The scan that produced these paths is a snapshot; a container can start before the user
   # confirms. Re-check against the live mounts and the compose set instead of trusting it.
@@ -303,28 +303,28 @@ case "deleteAppdata":
   # protected set is incomplete, so we cannot prove a stopped stack is not being deleted
   if ( $composeUncertainDel ) {
     appdataCleanupNgLog("deleteAppdata refused: compose protection incomplete (".implode("; ",$composeUncertainDel).")",LOG_WARNING);
-    echo "refused: compose protection is incomplete (".implode("; ",$composeUncertainDel)."), so a stopped stack cannot be ruled out";
+    echo "A Docker Compose stack can't be fully read (".implode("; ",$composeUncertainDel)."), so a stopped stack can't be ruled out. Fix or remove the stack in Compose Manager, then try again";
     break;
   }
   $refused = array();
   foreach ($paths as $path) {
     $path = (string)$path;
-    if ( $path === "" ) { $refused[] = "(empty path)"; continue; }
+    if ( $path === "" ) { $refused[] = "(empty path): reload the page and try again"; continue; }
     # a forged value must never reach syslog or the reply verbatim
-    if ( appdataCleanupNgHasControlChars($path) ) { $refused[] = "(invalid path)"; continue; }
+    if ( appdataCleanupNgHasControlChars($path) ) { $refused[] = "(invalid path): reload the page and try again"; continue; }
     if ( ! appdataCleanupNgPathWithinAppdata($path) ) {
-      $refused[] = $path." (outside appdata)";
+      $refused[] = $path.": outside the appdata share, so this plugin won't delete it";
       continue;
     }
     # resolve symlinks BEFORE any protection check: a link inside appdata would otherwise pass the checks
     # under its own name while rm/zfs acts on its target, so every guard below runs on $real
     $real = @realpath(str_replace("/mnt/cache/","/mnt/user/",$path));
     if ( $real === false ) {
-      $refused[] = $path." (not found)";
+      $refused[] = $path.": already gone. Reload the page";
       continue;
     }
     if ( ! appdataCleanupNgPathWithinAppdata($real) ) {
-      $refused[] = $path." (resolves outside appdata)";
+      $refused[] = $path.": a link to a folder outside the appdata share, so this plugin won't delete it";
       continue;
     }
     # a container or stack may reference the link or its target, so both names are checked; containment is
@@ -334,13 +334,13 @@ case "deleteAppdata":
       if ( appdataCleanupNgCoveredBy($c,$composeNow) ) $claimed = true;
       foreach ( $inUseNow as $u => $unused ) if ( appdataCleanupNgPathUnder($u,$c) ) $live = true;
     }
-    if ( $claimed ) { $refused[] = $path." (claimed by a compose stack)"; continue; }
-    if ( $live )    { $refused[] = $path." (in use by an installed container)"; continue; }
+    if ( $claimed ) { $refused[] = $path.": used by a Compose stack. Remove the stack or its mapping in Compose Manager first"; continue; }
+    if ( $live )    { $refused[] = $path.": mapped into an installed container. Remove the container or change its mapping first"; continue; }
     # ZFS dataset: must be destroyed, never rm -rf (which empties a mounted dataset)
     $dataset = appdataCleanupNgResolveZfsDataset($real);
     if ( $dataset !== "" ) {
       if ( ! $zfsEnabled ) {
-        $refused[] = $path." (ZFS dataset; enable ZFS deletion)";
+        $refused[] = $path.": a ZFS dataset. Tick \"Allow ZFS dataset deletion\" in the Danger Zone to delete it";
         continue;
       }
       $r = appdataCleanupNgZfsDestroy($dataset);
@@ -349,20 +349,22 @@ case "deleteAppdata":
       } else {
         appdataCleanupNgLog("zfs destroy failed for ".$dataset.": ".$r['message'],LOG_WARNING);
         # mountpoints are anyone's to name, so the reason gets the same one-line cleanup as rm's
-        $why = isset($r['blocked']) ? substr(appdataCleanupNgOneLine($r['blocked']),0,300) : "";
-        $refused[] = $path.( $why !== "" ? " (not destroyed: ".$why.")" : " (zfs destroy failed)" );
+        $why = substr(appdataCleanupNgOneLine($r['blocked'] ?? $r['message']),0,300);
+        $next = isset($r['blocked']) ? "Check its child datasets with zfs list -r ".$dataset.", destroy or move them yourself, then try again"
+          : "If the dataset is busy, stop what uses it, then try again";
+        $refused[] = $path.": not destroyed (".$why."). ".$next;
       }
       continue;
     }
     # never rm -rf across a mount boundary that isn't a recognized dataset
     if ( appdataCleanupNgIsMountPoint($real) ) {
-      $refused[] = $path." (mount point, not a known dataset)";
+      $refused[] = $path.": a mount point (a share, disk or remote mount), not a dataset this plugin knows. Unmount it first, or delete it yourself";
       continue;
     }
     # rm -rf would also empty a filesystem mounted further inside (a child dataset, a bind mount)
     $inner = appdataCleanupNgMountsInside($real);
     if ( $inner === null || $inner ) {
-      $refused[] = $path.( $inner === null ? " (mount table unreadable)" : " (another filesystem is mounted at or inside it, at ".substr(appdataCleanupNgOneLine($inner[0]),0,200)."; unmount or delete that first)" );
+      $refused[] = $path.( $inner === null ? ": the mount table can't be read, so a mount inside it can't be ruled out. Try again" : ": another filesystem is mounted inside it, at ".substr(appdataCleanupNgOneLine($inner[0]),0,200).". Unmount or delete that first, then try again" );
       continue;
     }
     $rmOut = array(); $rmRc = 1;
@@ -370,12 +372,12 @@ case "deleteAppdata":
     if ( $rmRc !== 0 || @file_exists($real) ) {
       # rm names the blocker (busy, permission); one clean line, since it can echo hostile file names
       $why = substr(appdataCleanupNgOneLine(trim(implode(" ",$rmOut))),0,200);
-      $refused[] = $path." (delete failed".( $why !== "" ? ": ".$why : "" ).")";
+      $refused[] = $path.": not fully deleted".( $why !== "" ? " (".$why.")" : "" ).". A file may be in use or read-only; check the System Log, then try again";
     }
   }
   if ( ! empty($refused) ) {
     appdataCleanupNgLog("refused/failed delete: ".implode(", ",$refused),LOG_WARNING);
-    echo "refused ".count($refused)." of ".count($paths).": ".implode("; ",$refused);
+    echo "refused ".count($refused)." of ".count($paths).":\n".implode("\n",$refused);
     break;
   }
   echo "deleted";
@@ -399,13 +401,13 @@ case "deleteTemplates":
   # treat an empty list as "everything is stale" and delete the saved config of a running app
   if ( ! is_dir("/var/lib/docker/tmp") ) {
     appdataCleanupNgLog("deleteTemplates refused: docker service not running (can't confirm staleness)",LOG_WARNING);
-    echo "docker not running"; break;
+    echo appdataCleanupNgDockerRefusal(false); break;
   }
   $dc = new DockerClient();
   $info = $dc->getDockerContainers();
   if ( empty($info) && ! appdataCleanupNgContainerListTrustworthy($dc) ) {
     appdataCleanupNgLog("deleteTemplates refused: docker engine unreachable (can't confirm staleness)",LOG_WARNING);
-    echo "docker unreachable"; break;
+    echo appdataCleanupNgDockerRefusal(true); break;
   }
   $installedNames = array();
   foreach ( (array)$info as $c ) if ( ! empty($c['Name']) ) $installedNames[] = $c['Name'];
@@ -414,13 +416,13 @@ case "deleteTemplates":
   $n = 0; $refusedTpl = array();
   foreach ( $files as $f ) {
     $f = (string)$f;
-    if ( appdataCleanupNgHasControlChars($f) ) { $refusedTpl[] = "(invalid template path)"; continue; }
-    if ( ! isset($staleFiles[$f]) ) { $refusedTpl[] = basename($f)." (not currently stale)"; continue; }
+    if ( appdataCleanupNgHasControlChars($f) ) { $refusedTpl[] = "(invalid template path): reload the page and try again"; continue; }
+    if ( ! isset($staleFiles[$f]) ) { $refusedTpl[] = basename($f).": not a stale template any more. Reload the page"; continue; }
     if ( appdataCleanupNgDeleteTemplate($f) ) $n++;
-    else $refusedTpl[] = basename($f)." (delete failed)";
+    else $refusedTpl[] = basename($f).": delete failed. Check the System Log, then try again";
   }
   appdataCleanupNgLog("deleted ".$n." stale template(s)".( $refusedTpl ? ", refused: ".implode(", ",$refusedTpl) : "" ),LOG_INFO);
-  if ( ! empty($refusedTpl) ) { echo "refused ".count($refusedTpl)." of ".count($files).": ".implode("; ",$refusedTpl); break; }
+  if ( ! empty($refusedTpl) ) { echo "refused ".count($refusedTpl)." of ".count($files).":\n".implode("\n",$refusedTpl); break; }
   echo "deleted ".$n;
   break;
 
