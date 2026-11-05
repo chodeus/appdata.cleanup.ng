@@ -1,6 +1,5 @@
 <?php
-// Compose reads the stacks: real `docker compose config`, through the real helpers, on the real paths they read.
-// It writes /boot/config and /mnt/user/appdata, so it runs only in a throwaway container, given a compose binary:
+// Writes /boot/config and /mnt/user/appdata, so run it only in a throwaway container, given a compose binary:
 // docker run ... -e ACNG_TEST_COMPOSE=<path to docker-compose> php:8.2-cli php .github/scripts/compose-config.test.php
 require __DIR__ . "/throwaway-container.php";
 acngTestRefuseUnlessThrowaway(array("/boot/config", "/mnt/user", "/opt/acng-compose", "/opt/acng-fake", "/tmp/acng-probe.php"));

@@ -1,6 +1,5 @@
 <?php
-// Stale templates through Community Applications' shipped template reader, and folder sizes through du and the real cache.
-// It writes /boot/config, /mnt/user/appdata and /var/lib/appdata.cleanup.ng, so it runs only in a throwaway container:
+// Writes /boot/config, /mnt/user/appdata and /var/lib/appdata.cleanup.ng, so run it only in a throwaway container:
 // docker run ... -e ACNG_TEST_CA_HELPERS=<CA's include/helpers.php> php:8.2-cli php .github/scripts/stale-and-size.test.php
 require __DIR__ . "/throwaway-container.php";
 acngTestRefuseUnlessThrowaway(array("/boot/config", "/mnt/user", "/var/lib/appdata.cleanup.ng", "/tmp/acng-slow", "/tmp/victim.json"));
