@@ -503,7 +503,7 @@ function appdataCleanupNgBuildDiagnostics() {
   $uv = @parse_ini_file("/etc/unraid-version");
   $plg = @file_get_contents("/boot/config/plugins/appdata.cleanup.ng.plg");
   $ver = ( $plg && preg_match('/<!ENTITY version\s+"([^"]+)"/',$plg,$m) ) ? $m[1] : "unknown";
-  $cm = appdataCleanupNgComposeProjectsDir() ?? ACNG_COMPOSE_PROJECTS;
+  $cm = appdataCleanupNgComposeProjectsDir($cmWhy);
   $prot = appdataCleanupNgComposeReferencedPaths($unreadable);
 
   $out = array();
@@ -518,8 +518,8 @@ function appdataCleanupNgBuildDiagnostics() {
   $out[] = "templates      : ".count((array)glob("/boot/config/plugins/dockerMan/templates-user/*.xml"));
   $out[] = "";
   $out[] = "[compose]";
-  $out[] = "compose manager: ".(appdataCleanupNgComposeManagerInstalled() ? "installed" : ( is_dir($cm) ? "not installed, so the stacks it left are ignored" : "not installed" ));
-  $out[] = "stacks folder  : ".$cm;
+  $out[] = "compose manager: ".(appdataCleanupNgComposeManagerInstalled() ? "installed" : ( $cm !== null && is_dir($cm) ? "not installed, so the stacks it left are ignored" : "not installed" ));
+  $out[] = "stacks folder  : ".( $cm ?? "unknown (".$cmWhy.")" );
   $out[] = "protected paths: ".(empty($prot) ? "(none)" : count($prot));
   foreach ( array_slice($prot,0,50) as $p ) $out[] = "  - ".$p;
   foreach ( $unreadable as $u ) $out[] = "can't read     : ".$u;
@@ -1119,26 +1119,37 @@ function appdataCleanupNgComposeProjectsDir(&$why = null) {
     $why = "Compose Manager: its settings file ".$cfg." can't be read, so where its stacks are isn't known";
     if ( ! is_readable($cfg) ) return null;   # Unraid's my_parse_ini_file reads an unreadable file as empty
     $values = @my_parse_ini_file($cfg);
+    if ( ! is_array($values) ) return null;   # a settings file that doesn't parse
     if ( ! empty($values['PROJECTS_FOLDER']) ) $folder = rtrim((string)$values['PROJECTS_FOLDER'],"/");
   }
   $why = "Compose Manager: its stacks folder setting ".$folder." isn't an absolute path";
   return ( $folder !== "" && $folder[0] === "/" ) ? $folder : null;
 }
 
+# each of Compose Manager's stack folders, with $projectsDir set to the folder that holds them; null, with $why, when unknown
+function appdataCleanupNgComposeStackFolders(&$projectsDir,&$why = null) {
+  $projectsDir = appdataCleanupNgComposeProjectsDir($why);
+  if ( $projectsDir === null ) return null;
+  # a moved stacks folder that is missing may be on a pool that isn't mounted; the default one just has no stacks yet
+  $why = "Compose Manager: its stacks folder ".$projectsDir." is missing or can't be read";
+  if ( ! is_dir($projectsDir) ) return $projectsDir === ACNG_COMPOSE_PROJECTS ? array() : null;
+  $entries = @scandir($projectsDir);   # not glob: a moved folder's name can hold [ or ?, and glob hides read errors
+  $why = "Compose Manager: its stacks folder ".$projectsDir." can't be listed";
+  if ( $entries === false ) return null;
+  $folders = array();
+  foreach ( $entries as $entry ) if ( $entry[0] !== "." && is_dir($projectsDir."/".$entry) ) $folders[] = $projectsDir."/".$entry;
+  return $folders;
+}
+
 function appdataCleanupNgComposeReferencedPaths(&$uncertain = null, &$rootBound = null) {
   $rootBound = array();   # stacks that bind a whole appdata root, so they can reach every folder
   $uncertain = array();   # "stack: why" for each stack that can't be fully read -> callers must fail closed
   if ( ! appdataCleanupNgComposeManagerInstalled() || ! appdataCleanupNgAppdataRoots() ) return array();
-  $projectsDir = appdataCleanupNgComposeProjectsDir($why);
-  if ( $projectsDir === null ) { $uncertain[] = $why; return array(); }
-  # a moved stacks folder that is missing may be on a pool that isn't mounted; the default one just has no stacks yet
-  if ( ! is_dir($projectsDir) ) {
-    if ( $projectsDir !== ACNG_COMPOSE_PROJECTS ) $uncertain[] = "Compose Manager: its stacks folder ".$projectsDir." is missing or can't be read";
-    return array();
-  }
+  $stacks = appdataCleanupNgComposeStackFolders($projectsDir,$why);
+  if ( $stacks === null ) { $uncertain[] = $why; return array(); }
   $protected = array();
   appdataCleanupNgProtectFolderOf($protected,$projectsDir);   # the stacks folder itself, when it sits in appdata
-  foreach ( (array)glob($projectsDir."/*",GLOB_ONLYDIR) as $proj ) {
+  foreach ( $stacks as $proj ) {
     $project = appdataCleanupNgComposeProject($proj,$why);
     if ( $project === null ) { $uncertain[] = basename($proj).": ".$why; continue; }
     list($base,$files,$envs,$envFile) = $project;

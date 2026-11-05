@@ -198,6 +198,21 @@ check("a moved stacks folder that is missing: uncertain", $uncertain === array("
 put($cmCfg, "PROJECTS_FOLDER=\"stacks\"\n");
 appdataCleanupNgComposeReferencedPaths($uncertain);
 check("a relative stacks folder setting: uncertain", strpos($uncertain[0] ?? "", "isn't an absolute path") !== false, json_encode($uncertain));
+check("a relative stacks folder setting: diagnostics say the folder is unknown", strpos(appdataCleanupNgBuildDiagnostics(), "stacks folder  : unknown (Compose Manager: its stacks folder setting stacks isn't an absolute path)") !== false);
+put($cmCfg, "PROJECTS_FOLDER=\"/mnt/user/appdata/unclosed\n");
+appdataCleanupNgComposeReferencedPaths($uncertain);
+check("a settings file that doesn't parse: uncertain", strpos($uncertain[0] ?? "", "can't be read") !== false, json_encode($uncertain));
+// glob would read the brackets as a pattern and find no stacks
+put($cmCfg, "PROJECTS_FOLDER=\"$appdata/compose [1]\"\n");
+put("$appdata/compose [1]/s/docker-compose.yml", $bind("bracketed"));
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+check("a stacks folder named with brackets: its stacks are read", $uncertain === array() && in_array("$appdata/bracketed", $protected, true), json_encode(array($uncertain, $protected)));
+// a stacks folder that can be entered but not listed: a nobody process, a folder with no read permission
+chmod("$appdata/compose [1]", 0711);
+$child = proc_open(array(PHP_BINARY, "-r", "posix_setgid(65534); posix_setuid(65534); require " . var_export($helpers, true) . "; \$u = null; appdataCleanupNgComposeReferencedPaths(\$u); echo json_encode(\$u);"), array(1 => array("pipe", "w")), $pipes);
+$said = stream_get_contents($pipes[1]);
+proc_close($child);
+check("a stacks folder that can't be listed: uncertain", strpos($said, "can't be listed") !== false, $said);
 put($cmCfg, "PROJECTS_FOLDER=\"$appdata/compose_projects\"\n");
 chmod($cmCfg, 0600);
 $child = proc_open(array(PHP_BINARY, "-r", "posix_setgid(65534); posix_setuid(65534); require " . var_export($helpers, true) . "; \$u = null; appdataCleanupNgComposeReferencedPaths(\$u); echo json_encode(\$u);"), array(1 => array("pipe", "w")), $pipes);
