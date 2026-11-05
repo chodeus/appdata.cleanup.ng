@@ -2,6 +2,19 @@
 
 ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING
 
+## Unreleased
+
+- A stopped Compose stack's folders are no longer offered for deletion
+- Stacks in a moved Compose Manager stacks folder are found, and that folder is protected
+- A stack that can't be read is named, and deletion waits until it's fixed
+- Stacks left behind by an uninstalled Compose Manager are ignored
+- The filesystem scan works when a container mounts a whole share, and names it
+- A delete can no longer reach data outside the chosen folder
+- Every refused delete says what to do next
+- The ignore list no longer loses entries
+- Rollbacks and reinstalls now install the right package
+- The support link points at the Unraid forum thread
+
 ## 2026.09.06
 
 - When a folder can't be deleted, the message now says which folders were refused and why
