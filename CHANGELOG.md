@@ -2,7 +2,7 @@
 
 ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING
 
-## Unreleased
+## 2026.11.06
 
 - A stopped Compose stack's folders are no longer offered for deletion
 - Stacks in a moved Compose Manager stacks folder are found, and that folder is protected
