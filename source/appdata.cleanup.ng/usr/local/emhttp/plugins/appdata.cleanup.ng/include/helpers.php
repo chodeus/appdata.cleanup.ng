@@ -503,7 +503,7 @@ function appdataCleanupNgBuildDiagnostics() {
   $uv = @parse_ini_file("/etc/unraid-version");
   $plg = @file_get_contents("/boot/config/plugins/appdata.cleanup.ng.plg");
   $ver = ( $plg && preg_match('/<!ENTITY version\s+"([^"]+)"/',$plg,$m) ) ? $m[1] : "unknown";
-  $cm = "/boot/config/plugins/compose.manager/projects";
+  $cm = appdataCleanupNgComposeProjectsDir() ?? ACNG_COMPOSE_PROJECTS;
   $prot = appdataCleanupNgComposeReferencedPaths($unreadable);
 
   $out = array();
@@ -518,7 +518,8 @@ function appdataCleanupNgBuildDiagnostics() {
   $out[] = "templates      : ".count((array)glob("/boot/config/plugins/dockerMan/templates-user/*.xml"));
   $out[] = "";
   $out[] = "[compose]";
-  $out[] = "compose manager: ".(appdataCleanupNgComposeManagerInstalled() ? "installed" : ( is_dir($cm) ? "not installed, so the stacks left on the flash are ignored" : "not installed" ));
+  $out[] = "compose manager: ".(appdataCleanupNgComposeManagerInstalled() ? "installed" : ( is_dir($cm) ? "not installed, so the stacks it left are ignored" : "not installed" ));
+  $out[] = "stacks folder  : ".$cm;
   $out[] = "protected paths: ".(empty($prot) ? "(none)" : count($prot));
   foreach ( array_slice($prot,0,50) as $p ) $out[] = "  - ".$p;
   foreach ( $unreadable as $u ) $out[] = "can't read     : ".$u;
@@ -1108,12 +1109,35 @@ function appdataCleanupNgComposeManagerInstalled() {
   return is_file("/var/log/plugins/compose.manager.plg");
 }
 
+if ( ! defined("ACNG_COMPOSE_PROJECTS") ) define("ACNG_COMPOSE_PROJECTS","/boot/config/plugins/compose.manager/projects");
+
+# Compose Manager's stacks folder, read as it reads it (saved settings over its defaults); null, with $why, when unknown
+function appdataCleanupNgComposeProjectsDir(&$why = null) {
+  $folder = ACNG_COMPOSE_PROJECTS;
+  foreach ( array("/usr/local/emhttp/plugins/compose.manager/default.cfg","/boot/config/plugins/compose.manager/compose.manager.cfg") as $cfg ) {
+    if ( ! file_exists($cfg) ) continue;
+    $why = "Compose Manager: its settings file ".$cfg." can't be read, so where its stacks are isn't known";
+    if ( ! is_readable($cfg) ) return null;   # Unraid's my_parse_ini_file reads an unreadable file as empty
+    $values = @my_parse_ini_file($cfg);
+    if ( ! empty($values['PROJECTS_FOLDER']) ) $folder = rtrim((string)$values['PROJECTS_FOLDER'],"/");
+  }
+  $why = "Compose Manager: its stacks folder setting ".$folder." isn't an absolute path";
+  return ( $folder !== "" && $folder[0] === "/" ) ? $folder : null;
+}
+
 function appdataCleanupNgComposeReferencedPaths(&$uncertain = null, &$rootBound = null) {
   $rootBound = array();   # stacks that bind a whole appdata root, so they can reach every folder
   $uncertain = array();   # "stack: why" for each stack that can't be fully read -> callers must fail closed
-  $projectsDir = "/boot/config/plugins/compose.manager/projects";
-  if ( ! appdataCleanupNgComposeManagerInstalled() || ! is_dir($projectsDir) || ! appdataCleanupNgAppdataRoots() ) return array();
+  if ( ! appdataCleanupNgComposeManagerInstalled() || ! appdataCleanupNgAppdataRoots() ) return array();
+  $projectsDir = appdataCleanupNgComposeProjectsDir($why);
+  if ( $projectsDir === null ) { $uncertain[] = $why; return array(); }
+  # a moved stacks folder that is missing may be on a pool that isn't mounted; the default one just has no stacks yet
+  if ( ! is_dir($projectsDir) ) {
+    if ( $projectsDir !== ACNG_COMPOSE_PROJECTS ) $uncertain[] = "Compose Manager: its stacks folder ".$projectsDir." is missing or can't be read";
+    return array();
+  }
   $protected = array();
+  appdataCleanupNgProtectFolderOf($protected,$projectsDir);   # the stacks folder itself, when it sits in appdata
   foreach ( (array)glob($projectsDir."/*",GLOB_ONLYDIR) as $proj ) {
     $project = appdataCleanupNgComposeProject($proj,$why);
     if ( $project === null ) { $uncertain[] = basename($proj).": ".$why; continue; }

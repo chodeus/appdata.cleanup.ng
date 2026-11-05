@@ -179,6 +179,33 @@ $protected = appdataCleanupNgComposeReferencedPaths($uncertain);
 chdir($cwd);
 check("a relative envpath", in_array("$appdata/right", $protected, true) && ! in_array("$appdata/wrong", $protected, true), json_encode($protected));
 
+// A stacks folder moved in Compose Manager's settings into appdata, as its own example suggests
+$cmCfg = "/boot/config/plugins/compose.manager/compose.manager.cfg";
+wipe("/boot/config/plugins/compose.manager"); wipe($appdata);
+put($cmCfg, "PROJECTS_FOLDER=\"$appdata/compose_projects/\"\n");
+put("$appdata/compose_projects/s/docker-compose.yml", $bind("moved"));
+put("$projects/p/docker-compose.yml", $bind("oldplace"));
+$uncertain = null;
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+check("a moved stacks folder: its stacks are read", $uncertain === array() && in_array("$appdata/moved", $protected, true), json_encode(array($uncertain, $protected)));
+check("a moved stacks folder: the default one is no longer read", ! in_array("$appdata/oldplace", $protected, true), json_encode($protected));
+wipe("$appdata/compose_projects/s");
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+check("a moved stacks folder with no stacks yet: the folder itself is protected", in_array("$appdata/compose_projects", $protected, true), json_encode($protected));
+put($cmCfg, "PROJECTS_FOLDER=\"/mnt/disks/gone/stacks\"\n");
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+check("a moved stacks folder that is missing: uncertain", $uncertain === array("Compose Manager: its stacks folder /mnt/disks/gone/stacks is missing or can't be read"), json_encode($uncertain));
+put($cmCfg, "PROJECTS_FOLDER=\"stacks\"\n");
+appdataCleanupNgComposeReferencedPaths($uncertain);
+check("a relative stacks folder setting: uncertain", strpos($uncertain[0] ?? "", "isn't an absolute path") !== false, json_encode($uncertain));
+put($cmCfg, "PROJECTS_FOLDER=\"$appdata/compose_projects\"\n");
+chmod($cmCfg, 0600);
+$child = proc_open(array(PHP_BINARY, "-r", "posix_setgid(65534); posix_setuid(65534); require " . var_export($helpers, true) . "; \$u = null; appdataCleanupNgComposeReferencedPaths(\$u); echo json_encode(\$u);"), array(1 => array("pipe", "w")), $pipes);
+$said = stream_get_contents($pipes[1]);
+proc_close($child);
+check("an unreadable Compose Manager settings file: uncertain", strpos($said, "can't be read, so where its stacks are") !== false, $said);
+wipe("/boot/config/plugins/compose.manager"); wipe($appdata);
+
 // Each stack that can't be read is named with why; with Compose Manager uninstalled, the stacks it left are ignored
 wipe("/boot/config/plugins/compose.manager"); wipe($appdata);
 put("$projects/gone/indirect", "/mnt/user/data/composetest");
