@@ -245,7 +245,7 @@ list($u, $p) = child($basePath);
 check("no compose CLI: the patterns still read it", $u === false && in_array("$A/fallback", $p, true), json_encode(array($u, $p)));
 list($u, $p) = child("$fake:$basePath", "old");
 check("older compose: retried without --no-env-resolution", $u === false && in_array("$A/fakebind", $p, true) && ! in_array("$A/fallback", $p, true), json_encode(array($u, $p)));
-// A real compose that only lacks --no-env-resolution: a stack with env_file can't have those files found
+// A real compose without --no-env-resolution drops env_file, as every compose before v5 does: the named paths find them
 $oldReal = "/opt/acng-old";
 @mkdir($oldReal, 0755, true);
 file_put_contents("$oldReal/docker-compose", "#!/bin/sh\nfor a in \"\$@\"; do [ \"\$a\" = \"--no-env-resolution\" ] && { echo 'unknown flag: --no-env-resolution' >&2; exit 1; }; done\nexec /opt/acng-compose/docker-compose \"\$@\"\n");
@@ -253,12 +253,16 @@ chmod("$oldReal/docker-compose", 0755);
 put("$P/docker-compose.yml", "services:\n  app:\n    image: alpine\n    env_file:\n      - /mnt/user/appdata/oldenv/app.env\n");
 put("$A/oldenv/app.env", "A=1\n");
 list($u, $p) = child("$oldReal:$basePath");
-check("older compose and an env_file: uncertain", $u === true, json_encode(array($u, $p)));
+check("older compose and an env_file: the named path protects it", $u === false && in_array("$A/oldenv", $p, true), json_encode(array($u, $p)));
+put("$P/docker-compose.yml", "services:\n  app:\n    image: alpine\n    env_file:\n      - /mnt/user/appdata/old env/app.env # spaced\n");
+put("$A/old env/app.env", "A=1\n");
+list($u, $p) = child("$oldReal:$basePath");
+check("older compose and an unquoted env file path with a space: protected", $u === false && in_array("$A/old env", $p, true), json_encode(array($u, $p)));
 put("$P/docker-compose.yml", "include:\n  - inc.compose\nservices:\n  app:\n    image: alpine\n");
 put("$P/inc.compose", "services:\n  i:\n    image: alpine\n    env_file:\n      - /mnt/user/appdata/hiddenenv/x.env\n");
 put("$A/hiddenenv/x.env", "A=1\n");
 list($u, $p) = child("$oldReal:$basePath");
-check("older compose and an include: uncertain", $u === true, json_encode(array($u, $p)));
+check("older compose and an include of any name: its env file protected", $u === false && in_array("$A/hiddenenv", $p, true), json_encode(array($u, $p)));
 put("$P/docker-compose.yml", "services:\n  app:\n    image: alpine\n    volumes:\n      - /mnt/user/appdata/fallback:/config\n      - /mnt/user/appdata/fakebind:/c\n");
 list($u, $p) = child("$fake:$basePath", "ancient");
 check("compose without --format json: the patterns read it", $u === false && in_array("$A/fallback", $p, true), json_encode(array($u, $p)));

@@ -785,12 +785,6 @@ function appdataCleanupNgComposeConfigAttempt($argv) {
   return ( $marker !== "" && appdataCleanupNgComposeMarkerInPaths($config,$marker) ) ? false : $config;
 }
 
-# without --no-env-resolution compose folds env_file into environment, so those files (also in includes) can't be found
-function appdataCleanupNgComposeNamesEnvFiles($files) {
-  foreach ( $files as $f ) if ( preg_match('/\b(env_file|include|extends)\b/',(string)@file_get_contents($f)) ) return true;
-  return false;
-}
-
 # The stack as compose would run it (its decoded `config`): null without a usable compose CLI, false when compose
 # can't read it (an error, an unset variable inside a path, no answer in 20 s), so the caller fails closed
 function appdataCleanupNgComposeConfig($source,$files,$envFile) {
@@ -801,11 +795,11 @@ function appdataCleanupNgComposeConfig($source,$files,$envFile) {
   $args = array_merge($cmd,array("--project-directory",$source));
   foreach ( $used as $f ) array_push($args,"-f",$f);
   if ( $envFile !== "" ) array_push($args,"--env-file",$envFile);
-  # older compose lacks --no-env-resolution (which keeps env_file paths); without --format json it can't be used at all
-  foreach ( array(array("--no-env-resolution","--format","json"),array("--format","json")) as $attempt => $flags ) {
+  # only compose v5+ keeps env_file paths, and older compose lacks the flag: the named paths find env files on any version.
+  # Without --format json compose can't be used at all.
+  foreach ( array(array("--no-env-resolution","--format","json"),array("--format","json")) as $flags ) {
     $config = appdataCleanupNgComposeConfigAttempt(array_merge($args,array("config"),$flags));
-    if ( $config === null ) continue;
-    return ( $attempt === 1 && appdataCleanupNgComposeNamesEnvFiles($used) ) ? false : $config;
+    if ( $config !== null ) return $config;
   }
   return null;
 }
@@ -865,9 +859,11 @@ function appdataCleanupNgComposeConfigPaths($config) {
 function appdataCleanupNgComposeExistingNames($file,$env) {
   $text = appdataCleanupNgExpandEnv(str_replace("\r","",(string)@file_get_contents($file)),$env);
   preg_match_all('#"([^"\n]+)"|\'([^\'\n]+)\'|([^\s"\'\[\]{},:=\#]+)#',$text,$m,PREG_SET_ORDER);
+  $names = array_map(function($hit) { return implode("",array_slice($hit,1)); },$m);   # only the alternative that matched is non-empty
+  # a plain yaml value may hold spaces: the rest of a "- " or "key: " line, less a trailing comment
+  preg_match_all('#^[ \t]*(?:- +)?(?:[^\s:\#]+: +)?([^\s"\'\#][^\n]*?)[ \t]*(?:[ \t]\#.*)?$#m',$text,$plain);
   $paths = array();
-  foreach ( $m as $hit ) {
-    $name = implode("",array_slice($hit,1));   # only the alternative that matched is non-empty
+  foreach ( array_merge($names,$plain[1] ?? array()) as $name ) {
     if ( $name === "" || appdataCleanupNgHasControlChars($name) ) continue;
     $path = $name[0] === "/" ? $name : dirname($file)."/".$name;
     if ( file_exists($path) ) $paths[] = $path;
@@ -888,10 +884,17 @@ function appdataCleanupNgComposeNamedPaths($files,$env) {
     foreach ( appdataCleanupNgComposeExistingNames($f,$env) as $path ) {
       if ( isset($found[$path]) ) continue;
       $found[$path] = true;
-      if ( is_file($path) && preg_match('#\.ya?ml$#',$path) ) $queue[] = $path;
+      if ( appdataCleanupNgComposeFileToFollow($path) ) $queue[] = $path;
     }
   }
   return array_keys($found);
+}
+
+# a named file that reads as compose (include and extends targets may have any name), small enough to read
+function appdataCleanupNgComposeFileToFollow($path) {
+  if ( ! is_file($path) ) return false;
+  if ( preg_match('#\.ya?ml$#',$path) ) return true;
+  return (int)@filesize($path) <= 1048576 && preg_match('/^(?:services|include):/m',(string)@file_get_contents($path));
 }
 
 # a path that holds a whole appdata root (a bind of /mnt/user, or of appdata itself): every folder under it is in use
