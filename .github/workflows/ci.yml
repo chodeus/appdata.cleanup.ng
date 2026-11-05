@@ -44,6 +44,13 @@ jobs:
       - name: Validate plugin manifest (XML)
         run: xmllint --noout plugins/appdata.cleanup.ng.plg
 
+      # It writes /boot/config and /mnt/user/appdata, so only inside this throwaway container.
+      - name: Compose protection and the ignore list
+        uses: docker://php:8.2-cli@sha256:a76ea7d3dd8f65eefff85e9c883f4d146808e0075c30ae6bccbb2a3753d373b8
+        with:
+          entrypoint: php
+          args: .github/scripts/compose-protection.test.php
+
       - name: Checkout release scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

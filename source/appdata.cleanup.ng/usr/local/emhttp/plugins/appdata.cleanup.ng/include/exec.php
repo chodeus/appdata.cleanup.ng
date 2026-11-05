@@ -167,7 +167,7 @@ case 'getOrphanAppdata':
       }
     }
     if ( $composeUncertain ) {
-      $fsScanSkipped = "A Docker Compose stack references an unresolved \${VAR} host path, so the scan can't tell which folders are in use. Define it in the project .env to enable the scan.";
+      $fsScanSkipped = "A Docker Compose stack can't be fully read (an unresolved \${VAR} or ../ host path, an include or extends, or a compose location that is missing or unreadable), so the scan can't tell which folders are in use. Check the stacks in Compose Manager.";
     } else if ( $rootMounted ) {
       $fsScanSkipped = "A container (running or stopped) bind-mounts an entire appdata root, so every folder is in use. The filesystem scan is disabled to avoid offering in-use folders.";
     } else {
@@ -306,10 +306,10 @@ case "deleteAppdata":
   $composeNow = array();
   $composeUncertainDel = false;
   foreach ( appdataCleanupNgComposeReferencedPaths($composeUncertainDel) as $cp ) $composeNow[$cp] = true;
-  # fail closed: an unreadable compose file or an unresolved ${VAR} host path means the
+  # fail closed: a stack that can't be fully read (see appdataCleanupNgComposeReferencedPaths) means the
   # protected set is incomplete, so we cannot prove a stopped stack is not being deleted
   if ( $composeUncertainDel ) {
-    appdataCleanupNgLog("deleteAppdata refused: compose protection incomplete (unreadable file or unresolved variable)",LOG_WARNING);
+    appdataCleanupNgLog("deleteAppdata refused: compose protection incomplete (a stack could not be fully read)",LOG_WARNING);
     echo "refused: compose protection is incomplete, so a stopped stack cannot be ruled out";
     break;
   }
@@ -393,13 +393,11 @@ case "captureDiagnostics":
   break;
 
 case "ignorePath":
-  appdataCleanupNgAddIgnore(getPost("path",""));
-  echo "ok";
+  echo appdataCleanupNgAddIgnore(getPost("path","")) ? "ok" : "failed";
   break;
 
 case "unignorePath":
-  appdataCleanupNgRemoveIgnore(getPost("path",""));
-  echo "ok";
+  echo appdataCleanupNgRemoveIgnore(getPost("path","")) ? "ok" : "failed";
   break;
 
 case "deleteTemplates":
