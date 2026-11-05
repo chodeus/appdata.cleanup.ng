@@ -2,6 +2,30 @@
 
 ALWAYS VERIFY THE FOLDERS THE PLUGIN OFFERS BEFORE DELETING
 
+## Unreleased
+
+- Folders a Compose stack uses are protected even while the stack is stopped. With Compose Manager's compose installed, each stack is read with docker compose itself, so includes, extends, anchors, profiles and variables resolve as they do when the stack runs
+- Protected folders now include every bind, named-volume device, env file, build context, secret and config file, on any pool, array disk or /mnt/user0, plus the stack's own folder and the folders of its compose and env files
+- Stacks are read the way Compose Manager runs them, including an indirect compose location, extra compose files and a custom env file
+- Without docker compose, more bind forms are read: `- source:`, one-line lists and maps, quoted paths, trailing comments and Windows line endings
+- When a stack can't be fully read (docker compose fails, a path has an unset variable, or a compose location is missing or unreadable), the scan names the stack and the reason, skips the filesystem check, and deletes are refused
+- Stacks left on the flash drive by an uninstalled Compose Manager are ignored
+- A container or stack that mounts a whole share no longer turns the filesystem scan off. The scan names them, and each folder they can reach gets the "in use by mount" badge
+- A delete can no longer reach data outside the chosen folder: a dataset is refused when one of its children is mounted elsewhere, unmounted or a volume, and so is a folder with another filesystem mounted inside it
+- A delete is refused when the child dataset list or the mount table can't be read
+- A folder is matched to its dataset only by where that dataset is mounted now, by exact path
+- The confirm dialog says that child datasets inside the folder are deleted too
+- Every refused delete says what to do next, one block per folder: the path, the problem, any details such as the child datasets in the way, then what to do
+- The ignore list changes one request at a time and is never written over when it can't be read. A failed save is reported instead of answered "ok"
+- A scan or ignore request that gets no answer now says so
+- Folder sizes from two scans at once are both kept
+- Each log message stays on one line, so a newline in a path or file name can't add a log record
+- The diagnostics report Compose Manager as installed only when the plugin is, and list any stack that can't be read
+- Installing a manifest installs the package it names, so a rollback, an older test build or a forced reinstall takes effect
+- Support links point at the Unraid forum thread
+- fix: list the stacks folder literally and fail closed when it can't be listed or its settings don't parse, and show an unknown folder in diagnostics
+- fix: read Compose stacks from the folder Compose Manager is set to use, and protect that folder
+
 ## 2026.09.06
 
 - When a folder can't be deleted, the message now says which folders were refused and why
