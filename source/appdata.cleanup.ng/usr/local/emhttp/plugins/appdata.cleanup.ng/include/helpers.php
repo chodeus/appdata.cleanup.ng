@@ -297,7 +297,7 @@ function appdataCleanupNgZfsDestroy($dataset,$mountinfo="/proc/self/mountinfo") 
       # -r also destroys child datasets, but the in-use checks only covered what is mounted inside this folder
       $outside = appdataCleanupNgZfsChildrenOutside($ds,$mountinfo);
       if ( $outside === null ) return array("ok"=>false,"recursive"=>true,"blocked"=>"its child datasets could not be checked","message"=>"child datasets could not be checked, not escalating to -r");
-      if ( $outside ) return array("ok"=>false,"recursive"=>true,"blocked"=>"child datasets outside this folder: ".implode(", ",$outside),"message"=>"child datasets outside the folder: ".implode(", ",$outside));
+      if ( $outside ) return array("ok"=>false,"recursive"=>true,"blocked"=>"child datasets outside this folder: ".implode(", ",$outside),"outside"=>$outside,"message"=>"child datasets outside the folder: ".implode(", ",$outside));
     } else {
       return array("ok"=>false,"recursive"=>false,"message"=>"dry-run failed, not escalating to -r: ".trim(implode("\n",$o)));
     }
@@ -504,7 +504,7 @@ function appdataCleanupNgBuildDiagnostics() {
   $plg = @file_get_contents("/boot/config/plugins/appdata.cleanup.ng.plg");
   $ver = ( $plg && preg_match('/<!ENTITY version\s+"([^"]+)"/',$plg,$m) ) ? $m[1] : "unknown";
   $cm = "/boot/config/plugins/compose.manager/projects";
-  $prot = appdataCleanupNgComposeReferencedPaths();
+  $prot = appdataCleanupNgComposeReferencedPaths($unreadable);
 
   $out = array();
   $out[] = "=== Appdata Cleanup NG diagnostics ===";
@@ -518,9 +518,10 @@ function appdataCleanupNgBuildDiagnostics() {
   $out[] = "templates      : ".count((array)glob("/boot/config/plugins/dockerMan/templates-user/*.xml"));
   $out[] = "";
   $out[] = "[compose]";
-  $out[] = "compose manager: ".(is_dir($cm) ? "present" : "not installed");
+  $out[] = "compose manager: ".(appdataCleanupNgComposeManagerInstalled() ? "installed" : ( is_dir($cm) ? "not installed, so the stacks left on the flash are ignored" : "not installed" ));
   $out[] = "protected paths: ".(empty($prot) ? "(none)" : count($prot));
   foreach ( array_slice($prot,0,50) as $p ) $out[] = "  - ".$p;
+  foreach ( $unreadable as $u ) $out[] = "can't read     : ".$u;
   $out[] = "";
   $out[] = "[zfs]";
   $out[] = "zfs available  : ".(appdataCleanupNgZfsAvailable() ? "yes" : "no");
@@ -666,13 +667,16 @@ function appdataCleanupNgProjectMeta($proj) {
 }
 
 # where a project's compose files live: [source folder, the compose file indirect names, if it names one];
-# null when indirect can't be used, so callers fail closed
-function appdataCleanupNgComposeSource($proj,$meta) {
+# null, with $why, when indirect can't be used, so callers fail closed
+function appdataCleanupNgComposeSource($proj,$meta,&$why = null) {
+  $why = "Compose Manager marked its compose location as broken";
   if ( file_exists($proj."/indirect.invalid") ) return null;   # a broken target kept for repair
   if ( ! file_exists($proj."/indirect") && ! is_link($proj."/indirect") ) return array($proj,array());
   $target = rtrim($meta['indirect'],"/");
   $mode = strtolower($meta['indirect_mode']);
+  $why = "its compose location setting can't be used";
   if ( $target === "" || $target[0] !== "/" || ! in_array($mode,array("","file","folder"),true) ) return null;
+  $why = "its compose location ".$target." is missing or can't be read";
   # newer Compose Manager versions can point indirect at one compose file instead of a folder
   if ( $mode !== "file" && ! is_file($target) ) return ( is_dir($target) && is_readable($target) ) ? array($target,array()) : null;
   return ( is_file($target) && is_readable($target) ) ? array(dirname($target),array($target)) : null;
@@ -702,12 +706,13 @@ function appdataCleanupNgComposeExtraFiles($source,$envFile,$composeEnv,$extraLi
   return $files;
 }
 
-# [compose source folder, compose files, variable sets, env file] as Compose Manager runs the project; null when its
-# compose location, a settings file or an env file can't be read, so callers fail closed
-function appdataCleanupNgComposeProject($proj) {
+# [compose source folder, compose files, variable sets, env file] as Compose Manager runs the project; null, with $why,
+# when its compose location, a settings file or an env file can't be read, so callers fail closed
+function appdataCleanupNgComposeProject($proj,&$why = null) {
   $meta = appdataCleanupNgProjectMeta($proj);
+  $why = "a Compose Manager settings file can't be read";
   if ( $meta === null ) return null;
-  $located = appdataCleanupNgComposeSource($proj,$meta);
+  $located = appdataCleanupNgComposeSource($proj,$meta,$why);
   if ( $located === null ) return null;
   list($source,$files) = $located;
   # cover modern (compose.yaml) and legacy (docker-compose.yml) names + overrides, in source and project dirs
@@ -719,6 +724,7 @@ function appdataCleanupNgComposeProject($proj) {
   }
   $envFile = appdataCleanupNgComposeEnvFile($proj,$source,$meta['envpath']);
   $envs = appdataCleanupNgComposeEnvs($envFile,$source,$proj);
+  $why = "its env file can't be read";
   if ( $envs === null ) return null;
   $files = array_merge($files,appdataCleanupNgComposeExtraFiles($source,$envFile,$envs[0],$meta['extra_compose_files']));
   return array(rtrim($source,"/"),array_values(array_unique($files)),$envs,$envFile);
@@ -1070,24 +1076,59 @@ function appdataCleanupNgComposeProtectConfig($config,$files,$envs,&$protected,&
   return $trusted;
 }
 
+# a problem as the page shows it, one line each: the path (if any), what is wrong, "- " details, then "What to do: "
+function appdataCleanupNgExplain($path,$problem,$next,$details=array()) {
+  $lines = array();
+  if ( $path !== "" ) $lines[] = $path;
+  $lines[] = $problem.".";
+  foreach ( $details as $d ) $lines[] = "- ".substr($d,0,300);
+  $lines[] = "What to do: ".$next.".";
+  return implode("\n",array_map("appdataCleanupNgOneLine",$lines));
+}
+
+# a refused delete when Docker can't say which folders are in use
+function appdataCleanupNgDockerRefusal($running) {
+  return $running ? appdataCleanupNgExplain("","Docker didn't answer, so the plugin can't tell which folders are in use","Try again in a minute")
+    : appdataCleanupNgExplain("","Docker isn't running, so the plugin can't tell which folders are in use","Start Docker in Settings, Docker, then try again");
+}
+
+# names of the containers with a bind that covers a whole appdata root, so they can reach every folder
+function appdataCleanupNgRootMounters($containers) {
+  $names = array();
+  foreach ( (array)$containers as $ct ) {
+    foreach ( (array)($ct['Volumes'] ?? array()) as $volume ) {
+      if ( appdataCleanupNgCoversAppdataRoot(explode(":",(string)$volume)[0]) ) { $names[] = (string)($ct['Name'] ?? ""); break; }
+    }
+  }
+  return $names;
+}
+
+# Unraid links each installed plugin's manifest here; uninstalling Compose Manager leaves its stacks on the flash
+function appdataCleanupNgComposeManagerInstalled() {
+  return is_file("/var/log/plugins/compose.manager.plg");
+}
+
 function appdataCleanupNgComposeReferencedPaths(&$uncertain = null, &$rootBound = null) {
-  $rootBound = false;   # set true when a stack binds a whole appdata root: callers then skip the filesystem scan
-  $uncertain = false;   # set true when a stack can't be fully read -> callers must fail closed
+  $rootBound = array();   # stacks that bind a whole appdata root, so they can reach every folder
+  $uncertain = array();   # "stack: why" for each stack that can't be fully read -> callers must fail closed
   $projectsDir = "/boot/config/plugins/compose.manager/projects";
-  if ( ! is_dir($projectsDir) || ! appdataCleanupNgAppdataRoots() ) return array();
+  if ( ! appdataCleanupNgComposeManagerInstalled() || ! is_dir($projectsDir) || ! appdataCleanupNgAppdataRoots() ) return array();
   $protected = array();
   foreach ( (array)glob($projectsDir."/*",GLOB_ONLYDIR) as $proj ) {
-    $project = appdataCleanupNgComposeProject($proj);
-    if ( $project === null ) { $uncertain = true; continue; }
+    $project = appdataCleanupNgComposeProject($proj,$why);
+    if ( $project === null ) { $uncertain[] = basename($proj).": ".$why; continue; }
     list($base,$files,$envs,$envFile) = $project;
     $bases = array_unique(array_filter(array($base,(string)@realpath($base))));
     # the stack's own folder, and the folders of its env file and compose files: the stack breaks without them
     foreach ( array_merge($bases,array_filter(array_merge(array($envFile),$files),"is_file")) as $used ) appdataCleanupNgProtectFolderOf($protected,$used);
     # compose itself reads the stack as it runs it; the patterns are for when there is no compose CLI, or it failed
     $config = appdataCleanupNgComposeConfig($base,$files,$envFile);
-    $trusted = is_array($config) ? appdataCleanupNgComposeProtectConfig($config,$files,$envs,$protected,$rootBound)
-      : appdataCleanupNgComposeProtectByPattern($files,$envs,$bases,$protected,$rootBound);
-    if ( $config === false || ! $trusted ) $uncertain = true;
+    $bound = false;
+    $trusted = is_array($config) ? appdataCleanupNgComposeProtectConfig($config,$files,$envs,$protected,$bound)
+      : appdataCleanupNgComposeProtectByPattern($files,$envs,$bases,$protected,$bound);
+    if ( $bound ) $rootBound[] = basename($proj);
+    if ( $config === false ) $uncertain[] = basename($proj).": docker compose could not read it";
+    else if ( ! $trusted ) $uncertain[] = basename($proj).": a path in it has an unset variable or can't be read";
   }
   return array_keys($protected);
 }

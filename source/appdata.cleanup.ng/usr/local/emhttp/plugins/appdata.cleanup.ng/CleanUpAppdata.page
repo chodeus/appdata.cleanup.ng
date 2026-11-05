@@ -46,6 +46,9 @@ function tr($string,$ret=false) {
 .acng-ignore:hover { opacity:1; color:#c0392b; }
 .acng-section { padding:8px 12px; background:rgba(230,140,0,.10); border-bottom:1px solid rgba(128,128,128,.15); font-size:.85em; font-weight:600; }
 .acng-empty { padding:14px; opacity:.7; }
+.acng-refusal { display:block; text-align:left; margin:0 0 .9em; overflow-wrap:anywhere; }
+.acng-refusal-path { font-weight:600; }
+.acng-next { font-style:italic; }
 .acng-zfs { display:inline-block; margin-left:8px; padding:0 6px; font-size:.7em; font-weight:600; color:#fff; background:#7e57c2; border-radius:3px; vertical-align:middle; }
 .acng-notpl { display:inline-block; margin-left:8px; padding:0 6px; font-size:.7em; font-weight:600; color:#fff; background:#e67e00; border-radius:3px; vertical-align:middle; }
 .acng-hastip { cursor:help; }
@@ -170,6 +173,24 @@ function acngIgnoreUnconfirmed() {
 	loadAppdata();
 }
 
+// one block per item from appdataCleanupNgExplain; the path gets its own weight, since the dialog's text is light
+function acngRefusalHtml(block, withPath) {
+	return "<span class='acng-refusal'>" + block.split("\n").map(function(line, i) {
+		var text = acngEscapeHtml(line);
+		if ( withPath && i === 0 ) return "<span class='acng-refusal-path'>" + text + "</span>";
+		return line.indexOf("What to do: ") === 0 ? "<span class='acng-next'>" + text + "</span>" : text;
+	}).join("<br>") + "</span>";
+}
+
+// "refused N of M:" then a block per item; anything else refuses the whole request
+function acngShowRefusal(reply) {
+	var m = /^refused (\d+) of (\d+):\n([\s\S]*)$/.exec(reply);
+	var partial = m !== null && m[1] !== m[2];
+	var blocks = m ? m[3].split("\n\n") : [reply || "<?tr("The server did not answer")?>"];
+	var html = blocks.map(function(block) { return acngRefusalHtml(block, m !== null); }).join("");
+	swal({title: partial ? "<?tr("Deletion incomplete")?>" : "<?tr("Nothing was deleted")?>", text: html, type: partial ? "warning" : "error", html: true});
+}
+
 function deleteSelectedTemplates() {
 	var files = [];
 	$('.staletpl:checked').each(function(){ files.push($(this).val()); });
@@ -184,11 +205,7 @@ function deleteSelectedTemplates() {
 	}, function() {
 		$.post(caURL,{action:'deleteTemplates',files:files,csrf_token:csrf_token},function(data) {
 			var reply = $.trim(String(data || ""));
-			if (reply.indexOf("refused ") === 0) {
-				swal("<?tr("Deletion incomplete")?>",reply,"warning");
-			} else if ( ! /^deleted \d+$/.test(reply)) {
-				swal("<?tr("Nothing was deleted")?>",reply || "<?tr("The server did not answer")?>","error");
-			}
+			if ( ! /^deleted \d+$/.test(reply)) acngShowRefusal(reply);
 			loadAppdata();
 		});
 	});
@@ -271,14 +288,8 @@ function deleteAppdata() {
 		$.post(caURL,{action:'deleteAppdata',paths:paths,zfs:($('#zfsEnable').is(':checked')?'yes':'no'),csrf_token:csrf_token},function(data) {
 			// the server answers "deleted" only when every path was removed; anything else is a refusal
 			var reply = $.trim(String(data || ""));
-			if (reply === "deleted") {
-				swal("<?tr("Deleted")?>","","success");
-			} else if (reply.indexOf("refused ") === 0 && reply.indexOf("refused 0 ") !== 0) {
-				// "refused N of M": some may still have been deleted, so do not claim nothing was
-				swal("<?tr("Deletion incomplete")?>",reply,"warning");
-			} else {
-				swal("<?tr("Nothing was deleted")?>",reply || "<?tr("The server did not answer")?>","error");
-			}
+			if (reply === "deleted") swal("<?tr("Deleted")?>","","success");
+			else acngShowRefusal(reply);
 			loadAppdata();
 		});
 	});
