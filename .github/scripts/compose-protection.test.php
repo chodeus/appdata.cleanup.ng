@@ -73,9 +73,37 @@ $cases = array(
   ), array("crlf", "crlf2"), false),
   "a one-line list bind on another pool" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes: [\"/mnt/nvme/appdata/flowabs:/config\", /mnt/nvme/appdata/flowabs2:/y]\n"), array("flowabs", "flowabs2"), false),
   "a one-line map bind on another pool" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - {type: bind, source: /mnt/nvme/appdata/flowmap, target: /x}\n"), array("flowmap"), false),
+  "a named volume's device on another pool" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - devdata:/config\nvolumes:\n  devdata:\n    driver_opts:\n      type: none\n      o: bind\n      device: /mnt/nvme/appdata/devbind\n"), array("devbind"), false),
+  "a device in a one-line map" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\nvolumes:\n  devdata:\n    driver_opts: {type: none, o: bind, device: /mnt/nvme/appdata/devflow}\n"), array("devflow"), false),
+  "an unset variable in a device" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\nvolumes:\n  devdata:\n    driver_opts:\n      o: bind\n      device: \${NOPE}/x\n"), array(), true),
+  "a secret file on another pool" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\nsecrets:\n  db:\n    file: /mnt/nvme/appdata/secretapp/db.txt\n"), array("secretapp"), false),
+  "a quoted source key" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \"type\": bind\n        \"source\": \"/mnt/nvme/appdata/quotedkey\"\n"), array("quotedkey"), false),
+  "a relative source in a one-line map" => array(array(
+    "$projects/p/indirect" => $appdata, "$appdata/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - {type: bind, source: ./flowrel , target: /x}\n",
+  ), array("flowrel"), false),
+  "a ../ source in a one-line map" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - {type: bind, source: ../appdata/x, target: /x}\n"), array(), true),
+  "an unset variable with :? in a short bind" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${NOPE:?set it}/x:/config\n"), array(), true),
+  "a :? variable that is set" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${SETV:?missing}/qset:/config\n", "$projects/p/.env" => "SETV=/mnt/user/appdata\n"), array("qset"), false),
+  "a :+ alternative" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${SETV:+/mnt/nvme/appdata/plusalt}:/config\n", "$projects/p/.env" => "SETV=1\n"), array("plusalt"), false),
   "an unset variable in a one-line list" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes: [\"\${NOPE}/flowvar:/config\"]\n"), array(), true),
   "an unset variable in a one-line map" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - {type: bind, source: \${NOPE}/x, target: /x}\n"), array(), true),
   "an unset variable led by - source" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - source: \${APPDIR}\n        target: /config\n        type: bind\n"), array(), true),
+  "a variable only another .env sets" => array(array(
+    "$projects/p/envpath" => "/mnt/user/settings/stack.env", "/mnt/user/settings/stack.env" => "OTHER=1\n", "$projects/p/.env" => "APPDIR=/mnt/user/appdata/notused\n",
+    "$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR:-/mnt/user/appdata/realdef}:/config\n",
+  ), array("realdef", "notused"), false),
+  "a variable set twice in the env file" => array(array(
+    "$projects/p/.env" => "APPDIR=/mnt/user/appdata/firstset\nAPPDIR=/mnt/user/appdata/lastset\n",
+    "$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR}:/config\n",
+  ), array("lastset"), false),
+  "an inline comment in the env file" => array(array(
+    "$projects/p/.env" => "APPDIR=/mnt/user/appdata # root\n",
+    "$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR}/inlinecmt:/config\n",
+  ), array("inlinecmt"), false),
+  "a quoted env value, then a comment" => array(array(
+    "$projects/p/.env" => "APPDIR=\"/mnt/user/appdata\" # root\n",
+    "$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR}/quotedcmt:/config\n",
+  ), array("quotedcmt"), false),
   "a missing compose file" => array(array("$projects/p/indirect" => "$appdata/gone/prod.yml", "$projects/p/indirect_mode" => "file"), array(), true),
   "a missing compose folder" => array(array("$projects/p/indirect" => "$appdata/gone"), array(), true),
   "file mode naming a folder" => array(array("$projects/p/indirect" => "$appdata/home", "$projects/p/indirect_mode" => "file", "$appdata/home/docker-compose.yml" => "services: {}\n"), array(), true),
@@ -96,6 +124,33 @@ foreach ( $cases as $name => $case ) {
   foreach ( $protected as $path ) check("$name: protects a folder, not a file: $path", ! is_file($path));
   check("$name: uncertain", $uncertain === $uncertainWanted, json_encode(array("uncertain" => $uncertain, "protected" => $protected)));
   foreach ( $folders as $folder ) check("$name: protects $folder", in_array("$appdata/$folder", $protected, true), json_encode($protected));
+}
+
+// Env values as docker compose v5.7.0 reads them (each probed with "docker compose config")
+foreach ( array(
+  'V=/mnt/a # comment' => '/mnt/a', 'V=/mnt/b#nocomment' => '/mnt/b#nocomment', 'V="/mnt/c" # comment' => '/mnt/c',
+  "V='/mnt/d' # comment" => '/mnt/d', 'V="/mnt/e # inside"' => '/mnt/e # inside', "V=/mnt/f\t# tab" => "/mnt/f\t# tab",
+  'V=  /mnt/g  ' => '/mnt/g', 'V= # only a comment' => '# only a comment', 'V="/mnt/m"#nospace' => '/mnt/m',
+  'V="/mnt/o\"q" # c' => '/mnt/o"q', 'V="/mnt/a\\\\b"' => '/mnt/a\\b', 'V="/mnt/a\$b"' => '/mnt/a$b', 'V="/mnt/a\qb"' => '/mnt/a\qb',
+  "V='/mnt/a\\nb'" => '/mnt/a\nb', 'V = /mnt/s' => '/mnt/s',
+) as $line => $want ) check("env value of $line", (appdataCleanupNgEnvLine($line)[1] ?? null) === $want, json_encode(appdataCleanupNgEnvLine($line)));
+
+// A file the scan needs that is there but can't be read leaves the stack uncertain: a nobody process reads a root-only one
+$defaulted = "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR:-/mnt/user/appdata/envdef}:/config\n";
+$unreadable = array(
+  ".env" => array("$projects/p/docker-compose.yml" => $defaulted, "$projects/p/.env" => "APPDIR=/mnt/user/appdata/hidden\n"),
+  "envpath" => array("$projects/p/docker-compose.yml" => $defaulted, "$projects/p/envpath" => "/mnt/user/settings/stack.env", "/mnt/user/settings/stack.env" => "APPDIR=/mnt/user/appdata/hidden\n"),
+  "extra_compose_files" => array("$projects/p/docker-compose.yml" => "services: {}\n", "$projects/p/extra_compose_files" => "extra.yml\n", "$projects/p/extra.yml" => $bind("extra")),
+  "indirect_mode" => array("$projects/p/indirect" => "$appdata/home", "$projects/p/indirect_mode" => "file", "$appdata/home/docker-compose.yml" => $bind("modeapp")),
+);
+foreach ( $unreadable as $name => $files ) {
+  wipe("/boot/config/plugins/compose.manager"); wipe($appdata); wipe("/mnt/user/settings");
+  foreach ( $files as $path => $body ) put($path, $body);
+  chmod("$projects/p/$name", 0600);
+  $child = proc_open(array(PHP_BINARY, "-r", "posix_setgid(65534); posix_setuid(65534); require " . var_export($helpers, true) . "; \$u = null; \$p = appdataCleanupNgComposeReferencedPaths(\$u); echo json_encode(array(\$u, \$p));"), array(1 => array("pipe", "w")), $pipes);
+  $said = stream_get_contents($pipes[1]);
+  proc_close($child);
+  check("an unreadable $name: uncertain", (json_decode($said, true)[0] ?? null) === true, $said);
 }
 
 // A compose source reached through a symlink protects the real folder, and its relative binds
@@ -143,6 +198,16 @@ check("ignore: a second writer waits for the lock", strpos(file_get_contents($ig
 flock($lock, LOCK_UN);
 proc_close($writer);
 check("ignore: and then writes", strpos(file_get_contents($ignore), "$appdata/four") !== false, file_get_contents($ignore));
+
+// A list that is there but can't be read is never replaced: a nobody process changes a root-only list in a world-writable folder
+file_put_contents($ignore, "$appdata/keepme\n");
+chmod($ignore, 0600); chmod(dirname($ignore), 0777); chmod(dirname($ignore) . "/ignore.lock", 0666);
+$child = proc_open(array(PHP_BINARY, "-r", "posix_setgid(65534); posix_setuid(65534); require " . var_export($helpers, true) . "; var_export(appdataCleanupNgAddIgnore('$appdata/new'));"), array(1 => array("pipe", "w")), $pipes);
+$said = stream_get_contents($pipes[1]);
+proc_close($child);
+clearstatcache();
+check("ignore: an unreadable list is left as it was", $said === "false" && file_get_contents($ignore) === "$appdata/keepme\n", $said . " " . json_encode(file_get_contents($ignore)));
+chmod(dirname($ignore), 0755);
 
 if ( $fail ) exit(1);
 echo "compose protection and ignore list tests passed (" . count($cases) . " compose cases)\n";
