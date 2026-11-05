@@ -871,30 +871,35 @@ function appdataCleanupNgComposeExistingNames($file,$env) {
   return $paths;
 }
 
-# Existing paths the compose files name (include and extends targets, an include's env_file, anything else), with
-# variables filled in, following any yaml file found. compose's output never lists them; extras only protect more.
-function appdataCleanupNgComposeNamedPaths($files,$env) {
+# Existing paths the compose files name (include and extends targets, env files, anything else), with variables
+# filled in, following each compose file found; $whole false when one is too big or there are too many to read
+function appdataCleanupNgComposeNamedPaths($files,$env,&$whole) {
+  $whole = true;
   $seen = array();
   $found = array();
   $queue = array_values($files);
-  while ( $queue && count($seen) < 100 ) {
+  while ( $queue ) {
     $f = array_shift($queue);
     if ( isset($seen[$f]) ) continue;
+    if ( count($seen) >= 100 ) { $whole = false; break; }
     $seen[$f] = true;
     foreach ( appdataCleanupNgComposeExistingNames($f,$env) as $path ) {
       if ( isset($found[$path]) ) continue;
       $found[$path] = true;
-      if ( appdataCleanupNgComposeFileToFollow($path) ) $queue[] = $path;
+      $follow = appdataCleanupNgComposeFileToFollow($path);
+      if ( $follow === null ) $whole = false;
+      if ( $follow ) $queue[] = $path;
     }
   }
   return array_keys($found);
 }
 
-# a named file that reads as compose (include and extends targets may have any name), small enough to read
+# whether a named file reads as compose (include and extends targets may have any name); null when it does but is over 1 MiB
 function appdataCleanupNgComposeFileToFollow($path) {
+  $max = 1048576;
   if ( ! is_file($path) ) return false;
-  if ( preg_match('#\.ya?ml$#',$path) ) return true;
-  return (int)@filesize($path) <= 1048576 && preg_match('/^(?:services|include):/m',(string)@file_get_contents($path));
+  if ( ! preg_match('/^\s*["\']?(?:services|include)["\']?\s*:/m',(string)@file_get_contents($path,false,null,0,$max)) ) return false;
+  return (int)@filesize($path) <= $max ? true : null;
 }
 
 # a path that holds a whole appdata root (a bind of /mnt/user, or of appdata itself): every folder under it is in use
@@ -1036,7 +1041,8 @@ function appdataCleanupNgComposeProtectConfig($config,$files,$envs,&$protected,&
   }
   foreach ( $paths['mounts'] as $path ) if ( appdataCleanupNgCoversAppdataRoot($path) ) $rootBound = true;
   foreach ( $envs as $env ) {
-    foreach ( appdataCleanupNgComposeNamedPaths(array_filter($files,"is_file"),$env) as $path ) appdataCleanupNgProtectFolderOf($protected,$path);
+    foreach ( appdataCleanupNgComposeNamedPaths(array_filter($files,"is_file"),$env,$whole) as $path ) appdataCleanupNgProtectFolderOf($protected,$path);
+    $trusted = $whole && $trusted;
   }
   return $trusted;
 }

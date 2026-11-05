@@ -207,6 +207,26 @@ fresh();
 $uncertain = null;
 check("no compose file: nothing protected", appdataCleanupNgComposeReferencedPaths($uncertain) === array() && $uncertain === false);
 
+// A named compose file too big to read whole, or too many to follow, leaves the stack uncertain; a big file that isn't compose is skipped
+fresh();
+put("$P/docker-compose.yml", "services:\n  w:\n    image: alpine\n    volumes:\n      - /mnt/user/appdata/bigapp/big.yml:/c/big.yml\n");
+put("$A/bigapp/big.yml", "services:\n" . str_repeat("# padding\n", 120000));
+$uncertain = null;
+appdataCleanupNgComposeReferencedPaths($uncertain);
+check("a named compose file over 1 MiB: uncertain", $uncertain === true);
+put("$A/bigapp/big.yml", str_repeat("key: value\n", 120000));
+$uncertain = null;
+$protected = appdataCleanupNgComposeReferencedPaths($uncertain);
+check("a big named file that isn't compose: not uncertain", $uncertain === false && in_array("$A/bigapp", $protected, true), json_encode(array($uncertain, $protected)));
+foreach ( array(99 => false, 101 => true) as $count => $want ) {
+  fresh();
+  put("$P/docker-compose.yml", "services:\n  w:\n    image: alpine\n    volumes:\n      - /mnt/user/appdata/chain/c0.yml:/c/c0.yml\n");
+  for ( $i = 0; $i < $count; $i++ ) put("$A/chain/c$i.yml", "services:\n# next: /mnt/user/appdata/chain/c" . ($i + 1) . ".yml\n");
+  $uncertain = null;
+  appdataCleanupNgComposeReferencedPaths($uncertain);
+  check("$count chained compose files: " . ($want ? "uncertain" : "read whole"), $uncertain === $want);
+}
+
 // Each case below runs in its own PHP, with its own PATH (the compose CLI is looked up once per process)
 $fake = "/opt/acng-fake";
 @mkdir($fake, 0755, true);
