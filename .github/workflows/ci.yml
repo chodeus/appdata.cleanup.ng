@@ -67,6 +67,22 @@ jobs:
           entrypoint: php
           args: .github/scripts/compose-protection.test.php
 
+      # The plugin reads stacks with docker compose itself; this runner's copy is the real thing to test against.
+      - name: Hand this runner's docker compose to the next step
+        run: |
+          mkdir -p .compose-bin
+          cp "$(docker info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}')" .compose-bin/docker-compose
+          .compose-bin/docker-compose version
+
+      # It writes /boot/config and /mnt/user/appdata, so only inside this throwaway container.
+      - name: Docker compose reads the stacks
+        uses: docker://php:8.2-cli@sha256:a76ea7d3dd8f65eefff85e9c883f4d146808e0075c30ae6bccbb2a3753d373b8
+        env:
+          ACNG_TEST_COMPOSE: .compose-bin/docker-compose
+        with:
+          entrypoint: php
+          args: .github/scripts/compose-config.test.php
+
       - name: Checkout release scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
