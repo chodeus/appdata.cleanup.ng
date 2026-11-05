@@ -118,15 +118,23 @@ foreach ( $cases as $name => $case ) {
   foreach ( $folders as $folder ) check("$name: protects $folder", in_array("$appdata/$folder", $protected, true), json_encode($protected));
 }
 
-// An env file that is there but can't be read leaves the stack uncertain: a nobody process reads a root-only one
-wipe("/boot/config/plugins/compose.manager"); wipe($appdata);
-put("$projects/p/docker-compose.yml", "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR:-/mnt/user/appdata/envdef}:/config\n");
-put("$projects/p/.env", "APPDIR=/mnt/user/appdata/hidden\n");
-chmod("$projects/p/.env", 0600);
-$child = proc_open(array(PHP_BINARY, "-r", "posix_setgid(65534); posix_setuid(65534); require " . var_export($helpers, true) . "; \$u = null; \$p = appdataCleanupNgComposeReferencedPaths(\$u); echo json_encode(array(\$u, \$p));"), array(1 => array("pipe", "w")), $pipes);
-$said = stream_get_contents($pipes[1]);
-proc_close($child);
-check("an unreadable env file: uncertain", (json_decode($said, true)[0] ?? null) === true, $said);
+// A file the scan needs that is there but can't be read leaves the stack uncertain: a nobody process reads a root-only one
+$defaulted = "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR:-/mnt/user/appdata/envdef}:/config\n";
+$unreadable = array(
+  ".env" => array("$projects/p/docker-compose.yml" => $defaulted, "$projects/p/.env" => "APPDIR=/mnt/user/appdata/hidden\n"),
+  "envpath" => array("$projects/p/docker-compose.yml" => $defaulted, "$projects/p/envpath" => "/mnt/user/settings/stack.env", "/mnt/user/settings/stack.env" => "APPDIR=/mnt/user/appdata/hidden\n"),
+  "extra_compose_files" => array("$projects/p/docker-compose.yml" => "services: {}\n", "$projects/p/extra_compose_files" => "extra.yml\n", "$projects/p/extra.yml" => $bind("extra")),
+  "indirect_mode" => array("$projects/p/indirect" => "$appdata/home", "$projects/p/indirect_mode" => "file", "$appdata/home/docker-compose.yml" => $bind("modeapp")),
+);
+foreach ( $unreadable as $name => $files ) {
+  wipe("/boot/config/plugins/compose.manager"); wipe($appdata); wipe("/mnt/user/settings");
+  foreach ( $files as $path => $body ) put($path, $body);
+  chmod("$projects/p/$name", 0600);
+  $child = proc_open(array(PHP_BINARY, "-r", "posix_setgid(65534); posix_setuid(65534); require " . var_export($helpers, true) . "; \$u = null; \$p = appdataCleanupNgComposeReferencedPaths(\$u); echo json_encode(array(\$u, \$p));"), array(1 => array("pipe", "w")), $pipes);
+  $said = stream_get_contents($pipes[1]);
+  proc_close($child);
+  check("an unreadable $name: uncertain", (json_decode($said, true)[0] ?? null) === true, $said);
+}
 
 // A compose source reached through a symlink protects the real folder, and its relative binds
 wipe("/boot/config/plugins/compose.manager"); wipe($appdata); wipe("/mnt/user/stacks");

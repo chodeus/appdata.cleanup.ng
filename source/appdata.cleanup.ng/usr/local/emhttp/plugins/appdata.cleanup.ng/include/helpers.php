@@ -620,18 +620,24 @@ function appdataCleanupNgExpandEnv($text,$env) {
   return $text;
 }
 
-# one Compose Manager metadata file of a project, trimmed; "" when it isn't there
-function appdataCleanupNgProjectValue($proj,$name) {
-  return is_file($proj."/".$name) ? trim((string)@file_get_contents($proj."/".$name)) : "";
+# a project's Compose Manager settings files, trimmed, "" for one that isn't there; null when one is there but can't be read
+function appdataCleanupNgProjectMeta($proj) {
+  $meta = array();
+  foreach ( array("indirect","indirect_mode","envpath","extra_compose_files") as $name ) {
+    $text = is_file($proj."/".$name) ? @file_get_contents($proj."/".$name) : "";
+    if ( $text === false ) return null;
+    $meta[$name] = trim($text);
+  }
+  return $meta;
 }
 
 # where a project's compose files live: [source folder, the compose file indirect names, if it names one];
-# null when indirect can't be read, so callers fail closed
-function appdataCleanupNgComposeSource($proj) {
+# null when indirect can't be used, so callers fail closed
+function appdataCleanupNgComposeSource($proj,$meta) {
   if ( file_exists($proj."/indirect.invalid") ) return null;   # a broken target kept for repair
   if ( ! file_exists($proj."/indirect") && ! is_link($proj."/indirect") ) return array($proj,array());
-  $target = rtrim(appdataCleanupNgProjectValue($proj,"indirect"),"/");
-  $mode = strtolower(appdataCleanupNgProjectValue($proj,"indirect_mode"));
+  $target = rtrim($meta['indirect'],"/");
+  $mode = strtolower($meta['indirect_mode']);
   if ( $target === "" || $target[0] !== "/" || ! in_array($mode,array("","file","folder"),true) ) return null;
   # newer Compose Manager versions can point indirect at one compose file instead of a folder
   if ( $mode !== "file" && ! is_file($target) ) return ( is_dir($target) && is_readable($target) ) ? array($target,array()) : null;
@@ -639,8 +645,7 @@ function appdataCleanupNgComposeSource($proj) {
 }
 
 # the one env file compose gets: envpath (absolute, or relative to the project folder), else the stack's default
-function appdataCleanupNgComposeEnvFile($proj,$source) {
-  $envPath = appdataCleanupNgProjectValue($proj,"envpath");
+function appdataCleanupNgComposeEnvFile($proj,$source,$envPath) {
   if ( $envPath !== "" ) {
     $candidate = $envPath[0] === "/" ? $envPath : $proj."/".$envPath;
     if ( is_file($candidate) ) return $candidate;
@@ -650,13 +655,13 @@ function appdataCleanupNgComposeEnvFile($proj,$source) {
 }
 
 # compose files beyond the default names: COMPOSE_FILE in the env file (relative to it), extra_compose_files (relative to the source)
-function appdataCleanupNgComposeExtraFiles($proj,$source,$envFile,$composeEnv) {
+function appdataCleanupNgComposeExtraFiles($source,$envFile,$composeEnv,$extraList) {
   $files = array();
   foreach ( preg_split('/[:;]/',(string)($composeEnv['COMPOSE_FILE'] ?? "")) as $extra ) {
     $extra = trim($extra);
     if ( $extra !== "" ) $files[] = $extra[0] === "/" ? $extra : dirname($envFile)."/".$extra;
   }
-  foreach ( preg_split('/\R/',appdataCleanupNgProjectValue($proj,"extra_compose_files")) as $extra ) {
+  foreach ( preg_split('/\R/',$extraList) as $extra ) {
     $extra = trim($extra);
     if ( $extra !== "" && $extra[0] !== "#" ) $files[] = $extra[0] === "/" ? $extra : $source."/".$extra;
   }
@@ -664,9 +669,12 @@ function appdataCleanupNgComposeExtraFiles($proj,$source,$envFile,$composeEnv) {
 }
 
 # [compose source folder, compose files, variable sets, env file] as Compose Manager runs the project (indirect file or folder,
-# extra_compose_files, COMPOSE_FILE, envpath); null when its compose location or an env file can't be read, so callers fail closed
+# extra_compose_files, COMPOSE_FILE, envpath); null when its compose location, a settings file or an env file can't be read,
+# so callers fail closed
 function appdataCleanupNgComposeProject($proj) {
-  $located = appdataCleanupNgComposeSource($proj);
+  $meta = appdataCleanupNgProjectMeta($proj);
+  if ( $meta === null ) return null;
+  $located = appdataCleanupNgComposeSource($proj,$meta);
   if ( $located === null ) return null;
   list($source,$files) = $located;
   # cover modern (compose.yaml) and legacy (docker-compose.yml) names + overrides, in source and project dirs
@@ -676,10 +684,10 @@ function appdataCleanupNgComposeProject($proj) {
   foreach ( array("compose.override","docker-compose.override") as $n ) {
     foreach ( array("yaml","yml") as $ext ) $files[] = $proj."/".$n.".".$ext;
   }
-  $envFile = appdataCleanupNgComposeEnvFile($proj,$source);
+  $envFile = appdataCleanupNgComposeEnvFile($proj,$source,$meta['envpath']);
   $envs = appdataCleanupNgComposeEnvs($envFile,$source,$proj);
   if ( $envs === null ) return null;
-  $files = array_merge($files,appdataCleanupNgComposeExtraFiles($proj,$source,$envFile,$envs[0]));
+  $files = array_merge($files,appdataCleanupNgComposeExtraFiles($source,$envFile,$envs[0],$meta['extra_compose_files']));
   return array(rtrim($source,"/"),array_values(array_unique($files)),$envs,$envFile);
 }
 
