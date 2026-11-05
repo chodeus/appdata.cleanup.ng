@@ -187,7 +187,7 @@ case 'getOrphanAppdata':
       ksort($mountedBy,SORT_STRING);   # SORT_STRING: all-numeric container names become int keys, keep alphabetical intent
       # structured tooltip content; hidden ([hidden] + CSS, aria-hidden so it can't join the checkbox label), shown as a floating tip by the page JS (native title can't be styled)
       $tip = "<span class='acng-tipbox' hidden aria-hidden='true'>"
-           . "<span class='acng-tiphead'>A container (running or stopped) bind-mounts a parent of this folder &mdash; it may still be in use.</span>";
+           . "<span class='acng-tiphead'>A container (running or stopped) or a Compose stack bind-mounts a parent of this folder &mdash; it may still be in use.</span>";
       foreach ($mountedBy as $n => $paths) {
         $paths = array_keys($paths);
         sort($paths,SORT_STRING);
@@ -220,14 +220,16 @@ case 'getOrphanAppdata':
   } else {
     echo "<div class='acng-list'>";
     # badge (don't hide) a real orphan that also sits under a broad in-use bind mount, so the user is warned it may be live
-    $mountedBy = function($hostDir) use ($inUseBy) {
-      $by = array();   # container name -> parent-mount set that reaches this folder
+    $mountedBy = function($hostDir) use ($inUseBy,$composeRootBound) {
+      $by = array();   # container or stack name -> parent-mount set that reaches this folder
       $cand = appdataCleanupNgCanon($hostDir);
       foreach ($inUseBy as $u => $containers) {
         if ( $u !== $cand && appdataCleanupNgPathUnder($cand,$u) ) {
           foreach ($containers as $n => $paths) $by[$n] = isset($by[$n]) ? $by[$n] + $paths : $paths;
         }
       }
+      # a stack's whole-share bind reaches every appdata folder
+      foreach ( $composeRootBound as $stack ) $by[$stack." (Compose stack)"] = array("a whole share" => true);
       return $by;
     };
     foreach ($availableVolumes as $volume) echo $renderRow($volume,false,$mountedBy($volume['HostDir']));
