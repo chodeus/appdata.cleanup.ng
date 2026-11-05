@@ -307,6 +307,7 @@ case "deleteAppdata":
     break;
   }
   $refused = array();
+  $partly = 0;   # folders rm got partway through: they are listed, but not counted as untouched
   foreach ($paths as $path) {
     $path = (string)$path;
     if ( $path === "" ) { $refused[] = appdataCleanupNgExplain("(empty path)","The page sent an empty path","Reload the page and try again"); continue; }
@@ -372,12 +373,13 @@ case "deleteAppdata":
     exec("rm -rf ".escapeshellarg($real)." 2>&1",$rmOut,$rmRc);
     if ( $rmRc !== 0 || @file_exists($real) ) {
       # rm names the blocker (busy, permission); one clean line, since it can echo hostile file names
+      $partly++;
       $refused[] = appdataCleanupNgExplain($path,"Not fully deleted","A file may be in use or read-only. Check the System Log, then try again",array_slice($rmOut,0,3));
     }
   }
   if ( ! empty($refused) ) {
     appdataCleanupNgLog("refused/failed delete: ".implode(", ",$refused),LOG_WARNING);
-    echo "refused ".count($refused)." of ".count($paths).":\n".implode("\n\n",$refused);
+    echo "refused ".(count($refused)-$partly)." of ".count($paths).":\n".implode("\n\n",$refused);
     break;
   }
   echo "deleted";
