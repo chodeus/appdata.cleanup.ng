@@ -39,11 +39,7 @@ case 'getOrphanAppdata':
 	foreach ( $all_files as $xmlfile) {
 		$o = readXmlFile($xmlfile);
 		if ( !$o ) continue;
-		if ( ! isset($o['Config']) || ! is_array($o['Config']) ) continue;
-		# one <Config> arrives as a record rather than a list (same normalisation as appdataCleanupNgStaleTemplates)
-		$configs = isset($o['Config'][0]) ? $o['Config'] : array($o['Config']);
-
-		foreach ($configs as $volumeArray) {
+		foreach ( appdataCleanupNgTemplateConfigs($o) as $volumeArray) {
 			if ( ! isset($volumeArray['@attributes']) ) {
 				continue;
 			}
