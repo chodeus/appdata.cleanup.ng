@@ -728,7 +728,8 @@ function appdataCleanupNgComposeCommand() {
   foreach ( array(array("docker","compose"),array("docker-compose")) as $try ) {
     $o = array(); $rc = 1;
     @exec(implode(" ",array_map("escapeshellarg",$try))." version 2>/dev/null",$o,$rc);
-    if ( $rc === 0 ) { $cmd = $try; break; }
+    # compose v1 has no `config --format json`: leave it to the pattern reader
+    if ( $rc === 0 && ! preg_match('/^docker-compose version 1\./m',implode("\n",$o)) ) { $cmd = $try; break; }
   }
   return $cmd;
 }

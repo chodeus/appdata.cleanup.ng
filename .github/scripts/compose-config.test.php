@@ -3,8 +3,8 @@
 // It writes /boot/config and /mnt/user/appdata, so it runs only in a throwaway container, given a compose binary:
 // docker run ... -e ACNG_TEST_COMPOSE=<path to docker-compose> php:8.2-cli php .github/scripts/compose-config.test.php
 if ( ! is_file("/.dockerenv") ) { fwrite(STDERR, "refusing to run outside a container: this test writes /boot/config and /mnt/user/appdata\n"); exit(2); }
-$compose = realpath((string)getenv("ACNG_TEST_COMPOSE"));
-if ( $compose === false ) { fwrite(STDERR, "ACNG_TEST_COMPOSE must name a docker compose binary\n"); exit(2); }
+$compose = (string)getenv("ACNG_TEST_COMPOSE");
+if ( ! is_file($compose) ) { fwrite(STDERR, "ACNG_TEST_COMPOSE must name a docker compose binary\n"); exit(2); }
 $helpers = $argv[1] ?? __DIR__ . "/../../source/appdata.cleanup.ng/usr/local/emhttp/plugins/appdata.cleanup.ng/include/helpers.php";
 $helpers = realpath($helpers);
 @mkdir("/opt/acng-compose", 0755, true);
@@ -212,11 +212,12 @@ $fake = "/opt/acng-fake";
 @mkdir($fake, 0755, true);
 file_put_contents("$fake/docker-compose", <<<'SH'
 #!/bin/sh
-[ "$1" = "version" ] && exit 0
+[ "$1" = "version" ] && { [ "$FAKE_MODE" = v1 ] && echo "docker-compose version 1.29.2, build 5becea4c"; exit 0; }
 json='{"services":{"app":{"volumes":[{"type":"bind","source":"/mnt/user/appdata/fakebind","target":"/c"}]}}}'
 case "$FAKE_MODE" in
   old) for a in "$@"; do [ "$a" = "--no-env-resolution" ] && { echo "unknown flag: --no-env-resolution" >&2; exit 1; }; done; echo "$json" ;;
   ancient) echo "unknown flag: --format" >&2; exit 1 ;;
+  v1) echo "Usage: config [options]" >&2; exit 1 ;;
   garbage) echo "not json" ;;
   timeout) exit 124 ;;
   warn) echo 'The "X" variable is not set. Defaulting to a blank string.' >&2; echo "$json" ;;
@@ -261,6 +262,8 @@ check("older compose and an include: uncertain", $u === true, json_encode(array(
 put("$P/docker-compose.yml", "services:\n  app:\n    image: alpine\n    volumes:\n      - /mnt/user/appdata/fallback:/config\n      - /mnt/user/appdata/fakebind:/c\n");
 list($u, $p) = child("$fake:$basePath", "ancient");
 check("compose without --format json: the patterns read it", $u === false && in_array("$A/fallback", $p, true), json_encode(array($u, $p)));
+list($u, $p) = child("$fake:$basePath", "v1");
+check("compose v1: the patterns read it", $u === false && in_array("$A/fallback", $p, true), json_encode(array($u, $p)));
 list($u, $p) = child("$fake:$basePath", "warn");
 check("compose warns of an unset variable outside any path: still read", $u === false && in_array("$A/fakebind", $p, true), json_encode(array($u, $p)));
 foreach ( array("garbage", "timeout") as $mode ) {
