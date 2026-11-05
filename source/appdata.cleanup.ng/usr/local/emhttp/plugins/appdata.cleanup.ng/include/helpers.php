@@ -559,7 +559,7 @@ function appdataCleanupNgReadSizeCache($cacheFile) {
 function appdataCleanupNgWriteSizeCache($cacheFile,$real,$entry) {
   $lock = @fopen($cacheFile.".lock","c");
   if ( $lock === false ) return;
-  @flock($lock,LOCK_EX);
+  if ( ! @flock($lock,LOCK_EX) ) { @fclose($lock); return; }   # unlocked, two scans would drop each other's entries
   $cache = appdataCleanupNgReadSizeCache($cacheFile);   # read again under the lock: a scan running alongside keeps its entries
   $cache[$real] = $entry;
   $tmp = $cacheFile.".".getmypid().".tmp";

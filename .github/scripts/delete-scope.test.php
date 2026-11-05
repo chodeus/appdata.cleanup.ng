@@ -1,7 +1,8 @@
 <?php
 // What a delete can reach: appdataCleanupNgZfsDestroy() with a fake zfs first on PATH, nested mounts, and datasets.
 // It creates folders under /mnt, so it runs only in a throwaway container: docker run ... php:8.2-cli
-if ( ! is_file("/.dockerenv") ) { fwrite(STDERR, "refusing to run outside a container: this test writes /mnt\n"); exit(2); }
+require __DIR__ . "/throwaway-container.php";
+acngTestRefuseUnlessThrowaway(array("/mnt"));
 $helpers = $argv[1] ?? __DIR__ . "/../../source/appdata.cleanup.ng/usr/local/emhttp/plugins/appdata.cleanup.ng/include/helpers.php";
 require $helpers;
 
