@@ -79,7 +79,13 @@ foreach ( $cases as $name => $case ) {
   check("$name: destroy command", $ran === $destroyed, "ran '" . $ran . "'");
   check("$name: result", $r['ok'] === ($destroyed !== ""), json_encode($r));
   if ( $refusal !== "" ) check("$name: reason", strpos($r['blocked'] ?? "", $refusal) !== false, json_encode($r));
+  if ( $refusal !== "" && strpos($refusal, "could not be checked") === false ) check("$name: the child is listed", in_array($refusal, $r['outside'] ?? array(), true), json_encode($r));
 }
+
+// A refusal as the page shows it: a line each for the path, the problem, each detail and what to do; a newline in a detail adds no line
+$text = appdataCleanupNgExplain("/mnt/user/appdata/x", "Not destroyed", "Try again", array("a\nforged: line", "c"));
+check("refusal layout", $text === "/mnt/user/appdata/x\nNot destroyed.\n- a forged: line\n- c\nWhat to do: Try again.", json_encode($text));
+check("refusal without a path", appdataCleanupNgExplain("", "Docker isn't running", "Start Docker") === "Docker isn't running.\nWhat to do: Start Docker.");
 
 // The refusal goes to syslog, which makes each line of a message its own record: listen on /dev/log
 @unlink("/dev/log");

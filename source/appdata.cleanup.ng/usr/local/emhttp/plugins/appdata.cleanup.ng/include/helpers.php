@@ -297,7 +297,7 @@ function appdataCleanupNgZfsDestroy($dataset,$mountinfo="/proc/self/mountinfo") 
       # -r also destroys child datasets, but the in-use checks only covered what is mounted inside this folder
       $outside = appdataCleanupNgZfsChildrenOutside($ds,$mountinfo);
       if ( $outside === null ) return array("ok"=>false,"recursive"=>true,"blocked"=>"its child datasets could not be checked","message"=>"child datasets could not be checked, not escalating to -r");
-      if ( $outside ) return array("ok"=>false,"recursive"=>true,"blocked"=>"child datasets outside this folder: ".implode(", ",$outside),"message"=>"child datasets outside the folder: ".implode(", ",$outside));
+      if ( $outside ) return array("ok"=>false,"recursive"=>true,"blocked"=>"child datasets outside this folder: ".implode(", ",$outside),"outside"=>$outside,"message"=>"child datasets outside the folder: ".implode(", ",$outside));
     } else {
       return array("ok"=>false,"recursive"=>false,"message"=>"dry-run failed, not escalating to -r: ".trim(implode("\n",$o)));
     }
@@ -1076,10 +1076,20 @@ function appdataCleanupNgComposeProtectConfig($config,$files,$envs,&$protected,&
   return $trusted;
 }
 
+# a problem as the page shows it, one line each: the path (if any), what is wrong, "- " details, then "What to do: "
+function appdataCleanupNgExplain($path,$problem,$next,$details=array()) {
+  $lines = array();
+  if ( $path !== "" ) $lines[] = $path;
+  $lines[] = $problem.".";
+  foreach ( $details as $d ) $lines[] = "- ".substr($d,0,300);
+  $lines[] = "What to do: ".$next.".";
+  return implode("\n",array_map("appdataCleanupNgOneLine",$lines));
+}
+
 # a refused delete when Docker can't say which folders are in use
 function appdataCleanupNgDockerRefusal($running) {
-  return $running ? "Docker didn't answer, so the plugin can't tell which folders are in use. Try again in a minute"
-    : "Docker isn't running, so the plugin can't tell which folders are in use. Start Docker in Settings, Docker, then try again";
+  return $running ? appdataCleanupNgExplain("","Docker didn't answer, so the plugin can't tell which folders are in use","Try again in a minute")
+    : appdataCleanupNgExplain("","Docker isn't running, so the plugin can't tell which folders are in use","Start Docker in Settings, Docker, then try again");
 }
 
 # names of the containers with a bind that covers a whole appdata root, so they can reach every folder

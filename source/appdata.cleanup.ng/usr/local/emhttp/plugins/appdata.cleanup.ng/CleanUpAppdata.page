@@ -46,6 +46,8 @@ function tr($string,$ret=false) {
 .acng-ignore:hover { opacity:1; color:#c0392b; }
 .acng-section { padding:8px 12px; background:rgba(230,140,0,.10); border-bottom:1px solid rgba(128,128,128,.15); font-size:.85em; font-weight:600; }
 .acng-empty { padding:14px; opacity:.7; }
+.acng-refusal { display:block; text-align:left; margin:0 0 .9em; overflow-wrap:anywhere; }
+.acng-next { font-style:italic; }
 .acng-zfs { display:inline-block; margin-left:8px; padding:0 6px; font-size:.7em; font-weight:600; color:#fff; background:#7e57c2; border-radius:3px; vertical-align:middle; }
 .acng-notpl { display:inline-block; margin-left:8px; padding:0 6px; font-size:.7em; font-weight:600; color:#fff; background:#e67e00; border-radius:3px; vertical-align:middle; }
 .acng-hastip { cursor:help; }
@@ -170,12 +172,22 @@ function acngIgnoreUnconfirmed() {
 	loadAppdata();
 }
 
-// "refused N of M:" then one line per item, each saying what to do; anything else is a refusal of the whole request
+// one block per item from appdataCleanupNgExplain: its path in bold when it has one, then the problem, details and what to do
+function acngRefusalHtml(block, withPath) {
+	return "<span class='acng-refusal'>" + block.split("\n").map(function(line, i) {
+		var text = acngEscapeHtml(line);
+		if ( withPath && i === 0 ) return "<b>" + text + "</b>";
+		return line.indexOf("What to do: ") === 0 ? "<span class='acng-next'>" + text + "</span>" : text;
+	}).join("<br>") + "</span>";
+}
+
+// "refused N of M:" then a block per item; anything else refuses the whole request
 function acngShowRefusal(reply) {
-	var m = /^refused (\d+) of (\d+):\s*([\s\S]*)$/.exec(reply);
+	var m = /^refused (\d+) of (\d+):\n([\s\S]*)$/.exec(reply);
 	var partial = m !== null && m[1] !== m[2];
-	var text = (m ? m[3] : reply) || "<?tr("The server did not answer")?>";
-	swal({title: partial ? "<?tr("Deletion incomplete")?>" : "<?tr("Nothing was deleted")?>", text: text.split("\n").map(acngEscapeHtml).join("<br>"), type: partial ? "warning" : "error", html: true});
+	var blocks = m ? m[3].split("\n\n") : [reply || "<?tr("The server did not answer")?>"];
+	var html = blocks.map(function(block) { return acngRefusalHtml(block, m !== null); }).join("");
+	swal({title: partial ? "<?tr("Deletion incomplete")?>" : "<?tr("Nothing was deleted")?>", text: html, type: partial ? "warning" : "error", html: true});
 }
 
 function deleteSelectedTemplates() {
