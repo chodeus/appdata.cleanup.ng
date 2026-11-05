@@ -174,8 +174,8 @@ case 'getOrphanAppdata':
   }
 
   # log one line per scan so "nothing showed up" is diagnosable without UI noise
-  appdataCleanupNgLog(sprintf("scan - templates=%d, docker_containers=%d, compose_protected=%d, offered=%d%s",
-    count($all_files), count($info), count($composeProtected), count($availableVolumes),
+  appdataCleanupNgLog(sprintf("scan - templates=%d, docker_containers=%d, compose_protected=%d, offered=%d, fs_offered=%d%s",
+    count($all_files), count($info), count($composeProtected), count($availableVolumes), count($fsOrphans),
     is_dir("/var/lib/docker/tmp") ? "" : " [docker service not running]"));
 
   $renderRow = function($volume,$noTemplate=false,$mountedBy=array()) {
