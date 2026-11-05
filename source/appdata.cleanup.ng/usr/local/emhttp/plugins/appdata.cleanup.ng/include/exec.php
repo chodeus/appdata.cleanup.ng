@@ -163,7 +163,7 @@ case 'getOrphanAppdata':
       }
     }
     if ( $composeUncertain ) {
-      $fsScanSkipped = "A Docker Compose stack references an unresolved \${VAR} host path, so the scan can't tell which folders are in use. Define it in the project .env to enable the scan.";
+      $fsScanSkipped = "A Docker Compose stack can't be fully read (an unresolved \${VAR} or ../ host path, an include or extends, or a compose location that is missing or unreadable), so the scan can't tell which folders are in use. Check the stacks in Compose Manager.";
     } else if ( $rootMounted ) {
       $fsScanSkipped = "A container (running or stopped) bind-mounts an entire appdata root, so every folder is in use. The filesystem scan is disabled to avoid offering in-use folders.";
     } else {
@@ -302,10 +302,10 @@ case "deleteAppdata":
   $composeNow = array();
   $composeUncertainDel = false;
   foreach ( appdataCleanupNgComposeReferencedPaths($composeUncertainDel) as $cp ) $composeNow[$cp] = true;
-  # fail closed: an unreadable compose file or an unresolved ${VAR} host path means the
+  # fail closed: a stack that can't be fully read (see appdataCleanupNgComposeReferencedPaths) means the
   # protected set is incomplete, so we cannot prove a stopped stack is not being deleted
   if ( $composeUncertainDel ) {
-    appdataCleanupNgLog("deleteAppdata refused: compose protection incomplete (unreadable file or unresolved variable)",LOG_WARNING);
+    appdataCleanupNgLog("deleteAppdata refused: compose protection incomplete (a stack could not be fully read)",LOG_WARNING);
     echo "refused: compose protection is incomplete, so a stopped stack cannot be ruled out";
     break;
   }
@@ -351,7 +351,9 @@ case "deleteAppdata":
         appdataCleanupNgLog("zfs destroy".($r['recursive'] ? " -r" : "")." ".$dataset,LOG_INFO);
       } else {
         appdataCleanupNgLog("zfs destroy failed for ".$dataset.": ".$r['message'],LOG_WARNING);
-        $refused[] = $path." (zfs destroy failed)";
+        # mountpoints are anyone's to name, so the reason gets the same one-line cleanup as rm's
+        $why = isset($r['blocked']) ? substr(appdataCleanupNgOneLine($r['blocked']),0,300) : "";
+        $refused[] = $path.( $why !== "" ? " (not destroyed: ".$why.")" : " (zfs destroy failed)" );
       }
       continue;
     }
@@ -360,11 +362,17 @@ case "deleteAppdata":
       $refused[] = $path." (mount point, not a known dataset)";
       continue;
     }
+    # rm -rf would also empty a filesystem mounted further inside (a child dataset, a bind mount)
+    $inner = appdataCleanupNgMountsInside($real);
+    if ( $inner === null || $inner ) {
+      $refused[] = $path.( $inner === null ? " (mount table unreadable)" : " (another filesystem is mounted at or inside it, at ".substr(appdataCleanupNgOneLine($inner[0]),0,200)."; unmount or delete that first)" );
+      continue;
+    }
     $rmOut = array(); $rmRc = 1;
     exec("rm -rf ".escapeshellarg($real)." 2>&1",$rmOut,$rmRc);
     if ( $rmRc !== 0 || @file_exists($real) ) {
       # rm names the blocker (busy, permission); one clean line, since it can echo hostile file names
-      $why = substr(preg_replace('/[\x00-\x1f\x7f]+/'," ",trim(implode(" ",$rmOut))),0,200);
+      $why = substr(appdataCleanupNgOneLine(trim(implode(" ",$rmOut))),0,200);
       $refused[] = $path." (delete failed".( $why !== "" ? ": ".$why : "" ).")";
     }
   }
@@ -381,13 +389,11 @@ case "captureDiagnostics":
   break;
 
 case "ignorePath":
-  appdataCleanupNgAddIgnore(getPost("path",""));
-  echo "ok";
+  echo appdataCleanupNgAddIgnore(getPost("path","")) ? "ok" : "failed";
   break;
 
 case "unignorePath":
-  appdataCleanupNgRemoveIgnore(getPost("path",""));
-  echo "ok";
+  echo appdataCleanupNgRemoveIgnore(getPost("path","")) ? "ok" : "failed";
   break;
 
 case "deleteTemplates":
