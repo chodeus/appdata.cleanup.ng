@@ -575,19 +575,32 @@ function appdataCleanupNgFormatBytes($bytes) {
 }
 
 # appdata claimed by Compose Manager stacks, incl. 'down' stacks (no container/template); indirect-aware since the real compose file may live outside the project dir
+
+# one env file line as [name, value]; null for a blank line, a comment or a line without "="
+function appdataCleanupNgEnvLine($line) {
+  $line = trim($line);
+  if ( $line === "" || $line[0] === "#" ) return null;
+  if ( strpos($line,"export ") === 0 ) $line = trim(substr($line,7));
+  $eq = strpos($line,"=");
+  if ( $eq === false ) return null;
+  $v = trim(substr($line,$eq+1));
+  if ( strlen($v) >= 2 && ($v[0] === '"' || $v[0] === "'") && substr($v,-1) === $v[0] ) $v = substr($v,1,-1);
+  return array(trim(substr($line,0,$eq)),$v);
+}
+
+# add the variables an env file sets to those $env doesn't set yet; in the file the last one wins, as compose reads it.
+# false when the file is there but can't be read
 function appdataCleanupNgParseEnvFile($file,&$env) {
-  if ( ! is_file($file) ) return;
-  foreach ( (array)@file($file,FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES) as $line ) {
-    $line = trim($line);
-    if ( $line === "" || $line[0] === "#" ) continue;
-    if ( strpos($line,"export ") === 0 ) $line = trim(substr($line,7));
-    $eq = strpos($line,"=");
-    if ( $eq === false ) continue;
-    $k = trim(substr($line,0,$eq));
-    $v = trim(substr($line,$eq+1));
-    if ( strlen($v) >= 2 && ($v[0] === '"' || $v[0] === "'") && substr($v,-1) === $v[0] ) $v = substr($v,1,-1);
-    if ( $k !== "" && ! isset($env[$k]) ) $env[$k] = $v; # first definition wins
+  if ( ! is_file($file) ) return true;
+  $lines = @file($file,FILE_IGNORE_NEW_LINES|FILE_SKIP_EMPTY_LINES);
+  if ( $lines === false ) return false;
+  $own = array();
+  foreach ( $lines as $line ) {
+    $pair = appdataCleanupNgEnvLine($line);
+    if ( $pair !== null && $pair[0] !== "" ) $own[$pair[0]] = $pair[1];
   }
+  $env += $own;
+  return true;
 }
 
 # one ${VAR...} or $VAR as compose expands it; an unset ${VAR}, ${VAR:?err} or ${VAR?err} stays as written
@@ -637,9 +650,7 @@ function appdataCleanupNgComposeEnvFile($proj,$source) {
 }
 
 # compose files beyond the default names: COMPOSE_FILE in the env file (relative to it), extra_compose_files (relative to the source)
-function appdataCleanupNgComposeExtraFiles($proj,$source,$envFile) {
-  $composeEnv = array();
-  if ( $envFile !== "" ) appdataCleanupNgParseEnvFile($envFile,$composeEnv);
+function appdataCleanupNgComposeExtraFiles($proj,$source,$envFile,$composeEnv) {
   $files = array();
   foreach ( preg_split('/[:;]/',(string)($composeEnv['COMPOSE_FILE'] ?? "")) as $extra ) {
     $extra = trim($extra);
@@ -652,8 +663,8 @@ function appdataCleanupNgComposeExtraFiles($proj,$source,$envFile) {
   return $files;
 }
 
-# [compose source folder, compose files, env vars, env file] as Compose Manager runs the project (indirect file or folder,
-# extra_compose_files, COMPOSE_FILE, envpath); null when its compose location can't be read, so callers fail closed
+# [compose source folder, compose files, variable sets, env file] as Compose Manager runs the project (indirect file or folder,
+# extra_compose_files, COMPOSE_FILE, envpath); null when its compose location or an env file can't be read, so callers fail closed
 function appdataCleanupNgComposeProject($proj) {
   $located = appdataCleanupNgComposeSource($proj);
   if ( $located === null ) return null;
@@ -666,11 +677,20 @@ function appdataCleanupNgComposeProject($proj) {
     foreach ( array("yaml","yml") as $ext ) $files[] = $proj."/".$n.".".$ext;
   }
   $envFile = appdataCleanupNgComposeEnvFile($proj,$source);
-  # it wins; the other .env files only resolve what it leaves unset, which can only add protection
-  $env = array();
-  foreach ( array_unique(array_filter(array($envFile,$source."/.env",$proj."/.env"))) as $e ) appdataCleanupNgParseEnvFile($e,$env);
-  $files = array_merge($files,appdataCleanupNgComposeExtraFiles($proj,$source,$envFile));
-  return array(rtrim($source,"/"),array_values(array_unique($files)),$env,$envFile);
+  $envs = appdataCleanupNgComposeEnvs($envFile,$source,$proj);
+  if ( $envs === null ) return null;
+  $files = array_merge($files,appdataCleanupNgComposeExtraFiles($proj,$source,$envFile,$envs[0]));
+  return array(rtrim($source,"/"),array_values(array_unique($files)),$envs,$envFile);
+}
+
+# the variable sets to read a stack's files with: the env file compose gets, alone (compose reads no other), and merged with
+# the stack's other .env files in case it gets another; null when one is there but can't be read
+function appdataCleanupNgComposeEnvs($envFile,$source,$proj) {
+  $own = array();
+  if ( ! appdataCleanupNgParseEnvFile($envFile,$own) ) return null;
+  $merged = $own;
+  foreach ( array($source."/.env",$proj."/.env") as $e ) if ( ! appdataCleanupNgParseEnvFile($e,$merged) ) return null;
+  return $merged === $own ? array($own) : array($own,$merged);
 }
 
 # mark the appdata folder a path lies in as protected, through any pool, disk or /mnt/user0 (the array-only view)
@@ -781,17 +801,19 @@ function appdataCleanupNgComposeProtectRootMatches($contents,$pattern,$roots,&$p
   return $trusted;
 }
 
-# protect what a stack's compose files bind, read by pattern; false when any of it can't be read or trusted
-function appdataCleanupNgComposeProtectByPattern($files,$env,$bases,&$protected) {
+# protect what a stack's compose files bind, read by pattern with each variable set; false when any of it can't be read or trusted
+function appdataCleanupNgComposeProtectByPattern($files,$envs,$bases,&$protected) {
   $roots = appdataCleanupNgAppdataRoots();
   $pattern = appdataCleanupNgComposeRootPattern($roots);
   $trusted = true;
   foreach ( array_filter($files,"is_file") as $f ) {
-    $contents = appdataCleanupNgComposeText($f,$env);
-    if ( $contents === false ) { $trusted = false; continue; }   # an existing compose file we couldn't read
-    $trusted = ! appdataCleanupNgComposeTextUnreadable($contents) && $trusted;
-    $trusted = appdataCleanupNgComposeProtectHosts($contents,$bases,$protected) && $trusted;
-    $trusted = appdataCleanupNgComposeProtectRootMatches($contents,$pattern,$roots,$protected) && $trusted;
+    foreach ( $envs as $env ) {
+      $contents = appdataCleanupNgComposeText($f,$env);
+      if ( $contents === false ) { $trusted = false; continue; }   # an existing compose file we couldn't read
+      $trusted = ! appdataCleanupNgComposeTextUnreadable($contents) && $trusted;
+      $trusted = appdataCleanupNgComposeProtectHosts($contents,$bases,$protected) && $trusted;
+      $trusted = appdataCleanupNgComposeProtectRootMatches($contents,$pattern,$roots,$protected) && $trusted;
+    }
   }
   return $trusted;
 }
@@ -804,11 +826,11 @@ function appdataCleanupNgComposeReferencedPaths(&$uncertain = null) {
   foreach ( (array)glob($projectsDir."/*",GLOB_ONLYDIR) as $proj ) {
     $project = appdataCleanupNgComposeProject($proj);
     if ( $project === null ) { $uncertain = true; continue; }
-    list($base,$files,$env,$envFile) = $project;
+    list($base,$files,$envs,$envFile) = $project;
     $bases = array_unique(array_filter(array($base,(string)@realpath($base))));
     # the stack's own folder, and the folders of its env file and compose files: the stack breaks without them
     foreach ( array_merge($bases,array_filter(array_merge(array($envFile),$files),"is_file")) as $used ) appdataCleanupNgProtectFolderOf($protected,$used);
-    if ( ! appdataCleanupNgComposeProtectByPattern($files,$env,$bases,$protected) ) $uncertain = true;
+    if ( ! appdataCleanupNgComposeProtectByPattern($files,$envs,$bases,$protected) ) $uncertain = true;
   }
   return array_keys($protected);
 }

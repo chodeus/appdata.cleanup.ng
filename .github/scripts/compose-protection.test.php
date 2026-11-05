@@ -88,6 +88,14 @@ $cases = array(
   "an unset variable in a one-line list" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes: [\"\${NOPE}/flowvar:/config\"]\n"), array(), true),
   "an unset variable in a one-line map" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - {type: bind, source: \${NOPE}/x, target: /x}\n"), array(), true),
   "an unset variable led by - source" => array(array("$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - source: \${APPDIR}\n        target: /config\n        type: bind\n"), array(), true),
+  "a variable only another .env sets" => array(array(
+    "$projects/p/envpath" => "/mnt/user/settings/stack.env", "/mnt/user/settings/stack.env" => "OTHER=1\n", "$projects/p/.env" => "APPDIR=/mnt/user/appdata/notused\n",
+    "$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR:-/mnt/user/appdata/realdef}:/config\n",
+  ), array("realdef", "notused"), false),
+  "a variable set twice in the env file" => array(array(
+    "$projects/p/.env" => "APPDIR=/mnt/user/appdata/firstset\nAPPDIR=/mnt/user/appdata/lastset\n",
+    "$projects/p/docker-compose.yml" => "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR}:/config\n",
+  ), array("lastset"), false),
   "a missing compose file" => array(array("$projects/p/indirect" => "$appdata/gone/prod.yml", "$projects/p/indirect_mode" => "file"), array(), true),
   "a missing compose folder" => array(array("$projects/p/indirect" => "$appdata/gone"), array(), true),
   "file mode naming a folder" => array(array("$projects/p/indirect" => "$appdata/home", "$projects/p/indirect_mode" => "file", "$appdata/home/docker-compose.yml" => "services: {}\n"), array(), true),
@@ -109,6 +117,16 @@ foreach ( $cases as $name => $case ) {
   check("$name: uncertain", $uncertain === $uncertainWanted, json_encode(array("uncertain" => $uncertain, "protected" => $protected)));
   foreach ( $folders as $folder ) check("$name: protects $folder", in_array("$appdata/$folder", $protected, true), json_encode($protected));
 }
+
+// An env file that is there but can't be read leaves the stack uncertain: a nobody process reads a root-only one
+wipe("/boot/config/plugins/compose.manager"); wipe($appdata);
+put("$projects/p/docker-compose.yml", "services:\n  app:\n    image: x\n    volumes:\n      - \${APPDIR:-/mnt/user/appdata/envdef}:/config\n");
+put("$projects/p/.env", "APPDIR=/mnt/user/appdata/hidden\n");
+chmod("$projects/p/.env", 0600);
+$child = proc_open(array(PHP_BINARY, "-r", "posix_setgid(65534); posix_setuid(65534); require " . var_export($helpers, true) . "; \$u = null; \$p = appdataCleanupNgComposeReferencedPaths(\$u); echo json_encode(array(\$u, \$p));"), array(1 => array("pipe", "w")), $pipes);
+$said = stream_get_contents($pipes[1]);
+proc_close($child);
+check("an unreadable env file: uncertain", (json_decode($said, true)[0] ?? null) === true, $said);
 
 // A compose source reached through a symlink protects the real folder, and its relative binds
 wipe("/boot/config/plugins/compose.manager"); wipe($appdata); wipe("/mnt/user/stacks");
