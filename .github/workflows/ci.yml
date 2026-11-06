@@ -20,19 +20,20 @@ jobs:
       - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
 
+      # short_open_tag: Unraid runs <? blocks as PHP; a stock php.ini reads them as HTML, unchecked
       - name: PHP syntax check
         run: |
           status=0
           while IFS= read -r f; do
-            php -l "$f" || status=1
-          done < <(find source -name '*.php')
+            php -d short_open_tag=1 -l "$f" || status=1
+          done < <(find source -type f \( -name '*.php' -o -name '*.page' \))
           exit $status
 
       - name: Function checker self-test
         run: php .github/scripts/check-plugin-functions.test.php
 
       - name: Every plugin function called is defined
-        run: php .github/scripts/check-plugin-functions.php source
+        run: php -d short_open_tag=1 .github/scripts/check-plugin-functions.php source
 
       # It creates folders under /mnt, so only inside this throwaway container.
       - name: A delete reaches nothing outside the folder
@@ -108,7 +109,7 @@ jobs:
     needs: validate
     if: failure() && github.event_name != 'pull_request'
     permissions: {}
-    uses: chodeus/chodeus-ops/.github/workflows/notify-discord.yml@cbd544d21103cfe854c8e0ec717ee2be4f097ad7 # main
+    uses: chodeus/chodeus-ops/.github/workflows/notify-discord.yml@c615a871ba4dfa791eac921b5b8e45652459b20b # main
     with:
       event_type: build
       status: failure

@@ -4,11 +4,24 @@
 $root = $argv[1] ?? "source";
 $prefix = strtolower("appdataCleanupNg");
 $defined = $called = array();
+$scanned = 0;
+
+// Unraid runs <? blocks as PHP; with short tags off token_get_all reads them as HTML and sees no calls
+if (!ini_get("short_open_tag")) {
+    fwrite(STDERR, "run with php -d short_open_tag=1: the plugin's pages use <? tags\n");
+    exit(2);
+}
 
 $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root));
 foreach ($it as $file) {
     if (!$file->isFile() || !preg_match('/\.(php|page)$/', $file->getFilename())) continue;
-    $tokens = @token_get_all(file_get_contents($file->getPathname()));
+    $code = @file_get_contents($file->getPathname());
+    if ($code === false) {
+        fwrite(STDERR, "can't read " . $file->getPathname() . "\n");
+        exit(1);
+    }
+    $scanned++;
+    $tokens = @token_get_all($code);
     if (!is_array($tokens)) continue;
 
     // index of the previous and next meaningful tokens, skipping whitespace and comments
@@ -52,6 +65,12 @@ foreach ($it as $file) {
     foreach ($meaningful as $n => $i) {
         $t = $tokens[$i];
         if (!is_array($t)) continue;
+        // a callback named in a string ("appdataCleanupNgOneLine") breaks on a rename like a call does
+        if ($t[0] === T_CONSTANT_ENCAPSED_STRING) {
+            $name = strtolower(ltrim(substr($t[1], 1, -1), "\\"));
+            if (preg_match('/^' . $prefix . '\w+$/', $name)) $called[$name] = true;
+            continue;
+        }
         $isName = $t[0] === T_STRING
             || (defined('T_NAME_FULLY_QUALIFIED') && $t[0] === T_NAME_FULLY_QUALIFIED);
         if (!$isName) continue;
@@ -75,6 +94,10 @@ foreach ($it as $file) {
         if (is_array($prev) && in_array($prev[0], $methodOps, true)) continue;
         if ($next === "(") $called[$name] = true;
     }
+}
+if (!$scanned) {
+    fwrite(STDERR, "no .php or .page files under $root\n");
+    exit(1);
 }
 $missing = array_diff(array_keys($called), array_keys($defined));
 if ($missing) {
