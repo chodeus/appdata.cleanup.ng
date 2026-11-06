@@ -25,7 +25,7 @@ jobs:
     permissions:
       contents: write
     # Pin to a reviewed chodeus-ops commit.
-    uses: chodeus/chodeus-ops/.github/workflows/unraid-plugin-test-build.yml@2ef08fcd646d269404bc80d30c249ecac949a724 # main
+    uses: chodeus/chodeus-ops/.github/workflows/unraid-plugin-test-build.yml@c615a871ba4dfa791eac921b5b8e45652459b20b # main
     with:
       plg_file: plugins/appdata.cleanup.ng.plg
       version: ${{ inputs.version || '' }}

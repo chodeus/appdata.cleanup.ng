@@ -108,7 +108,7 @@ jobs:
     needs: validate
     if: failure() && github.event_name != 'pull_request'
     permissions: {}
-    uses: chodeus/chodeus-ops/.github/workflows/notify-discord.yml@cbd544d21103cfe854c8e0ec717ee2be4f097ad7 # main
+    uses: chodeus/chodeus-ops/.github/workflows/notify-discord.yml@c615a871ba4dfa791eac921b5b8e45652459b20b # main
     with:
       event_type: build
       status: failure
