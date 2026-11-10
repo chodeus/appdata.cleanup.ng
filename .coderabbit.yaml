@@ -90,6 +90,21 @@ reviews:
           it. Flag only changes that WIDEN the delete scope, drop the -name
           "._*" filter, or write to a predictable shared path; tightening it
           (private destination, scoping find to the copy, set -euo) is correct.
+    - path: ".github/scripts/**"
+      instructions: |
+        CI checks and tests, run by ci.yml:
+        - A test that writes under /mnt, /boot/config or /var must call
+          acngTestRefuseUnlessThrowaway() with every root it wipes before it
+          creates anything, so it only runs in a throwaway container with no
+          mount at, above or inside those roots. Flag a new write outside the
+          listed roots, and any weakening of that guard.
+        - Tests load the shipped helpers.php and call its real functions. Flag a
+          test that copies the logic it claims to check, or stubs the part that
+          can fail. External commands such as zfs are faked through PATH and
+          must never be the real ones.
+        - check-plugin-functions.php fails the build when a plugin function is
+          called but never defined. It must keep failing on an unreadable file
+          and when short_open_tag is off, never pass as clean.
     - path: "**"
       instructions: |-
         Applies to every file, whatever the language:
