@@ -37,7 +37,7 @@ jobs:
 
       # It creates folders under /mnt, so only inside this throwaway container.
       - name: A delete reaches nothing outside the folder
-        uses: docker://php:8.5-cli@sha256:50956f094e90a716d43bea28087d447555ad80510e386ab8c9c10d8c70d781a9
+        uses: docker://php:8.6-cli@sha256:d84acf3155d907afaa5afa9b9457c5f12016b6dc7ade84659f40cdc505cc087d
         with:
           entrypoint: php
           args: .github/scripts/delete-scope.test.php
@@ -51,7 +51,7 @@ jobs:
           tar --warning=no-unknown-keyword -xJf "$RUNNER_TEMP/ca.txz" -C .ca-reader ./usr/local/emhttp/plugins/community.applications/include/helpers.php
 
       - name: Stale templates and folder sizes
-        uses: docker://php:8.5-cli@sha256:50956f094e90a716d43bea28087d447555ad80510e386ab8c9c10d8c70d781a9
+        uses: docker://php:8.6-cli@sha256:d84acf3155d907afaa5afa9b9457c5f12016b6dc7ade84659f40cdc505cc087d
         env:
           ACNG_TEST_CA_HELPERS: .ca-reader/usr/local/emhttp/plugins/community.applications/include/helpers.php
         with:
@@ -63,7 +63,7 @@ jobs:
 
       # It writes /boot/config and /mnt/user/appdata, so only inside this throwaway container.
       - name: Compose protection and the ignore list
-        uses: docker://php:8.5-cli@sha256:50956f094e90a716d43bea28087d447555ad80510e386ab8c9c10d8c70d781a9
+        uses: docker://php:8.6-cli@sha256:d84acf3155d907afaa5afa9b9457c5f12016b6dc7ade84659f40cdc505cc087d
         with:
           entrypoint: php
           args: .github/scripts/compose-protection.test.php
@@ -77,7 +77,7 @@ jobs:
 
       # It writes /boot/config and /mnt/user/appdata, so only inside this throwaway container.
       - name: Docker compose reads the stacks
-        uses: docker://php:8.5-cli@sha256:50956f094e90a716d43bea28087d447555ad80510e386ab8c9c10d8c70d781a9
+        uses: docker://php:8.6-cli@sha256:d84acf3155d907afaa5afa9b9457c5f12016b6dc7ade84659f40cdc505cc087d
         env:
           ACNG_TEST_COMPOSE: .compose-bin/docker-compose
         with:
